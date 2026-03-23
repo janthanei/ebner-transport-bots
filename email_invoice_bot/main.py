@@ -7,8 +7,7 @@ from dataclasses import asdict, dataclass
 
 from .attachment_processor import AttachmentProcessor
 from .config import AppConfig
-from .email_parser import parse_email
-from .imap_client import ImapClient
+from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
 from .storage import DailyPdfStorage
 from .web_downloader import WebDownloader
@@ -38,15 +37,42 @@ def setup_logging(level: str) -> None:
     )
 
 
-def process_cycle(config: AppConfig) -> ProcessSummary:
-    summary = ProcessSummary()
-    imap_client = ImapClient(
+def _fetch_emails_graph(config: AppConfig) -> list[ParsedEmail]:
+    from .graph_client import GraphClient
+
+    client = GraphClient(
+        tenant_id=config.graph_tenant_id,
+        client_id=config.graph_client_id,
+        client_secret=config.graph_client_secret,
+        mailbox=config.graph_mailbox,
+    )
+    return client.fetch_recent_messages(config.max_emails_per_cycle)
+
+
+def _fetch_emails_imap(config: AppConfig) -> list[ParsedEmail]:
+    from .imap_client import ImapClient
+
+    client = ImapClient(
         host=config.imap_host,
         port=config.imap_port,
         user=config.imap_user,
         app_password=config.imap_app_password,
         mailbox=config.imap_mailbox,
     )
+    emails: list[ParsedEmail] = []
+    for uid, raw in client.fetch_recent_messages(config.max_emails_per_cycle):
+        emails.append(parse_email(uid, raw))
+    return emails
+
+
+def process_cycle(config: AppConfig) -> ProcessSummary:
+    summary = ProcessSummary()
+
+    if config.mail_provider == "graph":
+        emails = _fetch_emails_graph(config)
+    else:
+        emails = _fetch_emails_imap(config)
+
     storage = DailyPdfStorage(config.output_root)
     attachment_processor = AttachmentProcessor(storage)
     web_downloader = WebDownloader(
@@ -56,10 +82,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         allowlist=config.link_domain_allowlist,
     )
 
-    messages = imap_client.fetch_recent_messages(config.max_emails_per_cycle)
-    for uid, raw in messages:
-        email_obj = parse_email(uid, raw)
-
+    for email_obj in emails:
         saved_paths = attachment_processor.process(email_obj)
         summary.saved_attachments += len(saved_paths)
 
@@ -85,6 +108,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
 def run() -> None:
     config = AppConfig.from_env()
     setup_logging(config.log_level)
+    LOGGER.info("Starting with provider=%s", config.mail_provider)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -108,4 +132,3 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-
