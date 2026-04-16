@@ -38,7 +38,7 @@ def main() -> None:
             "$select": select,
         }
     )
-    path = f"/users/{quote(config.graph_mailbox)}/messages?{qs}"
+    path = f"/users/{quote(config.graph_mailbox)}/mailFolders/inbox/messages?{qs}"
     data = client._api_get(path)
     messages = data.get("value", [])
 

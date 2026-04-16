@@ -2,7 +2,8 @@ from datetime import datetime
 from pathlib import Path
 
 from email_invoice_bot.email_parser import ParsedEmail
-from email_invoice_bot.main import ProcessSummary, process_cycle
+from email_invoice_bot.main import ProcessSummary, _finalize_processed_email, process_cycle
+from email_invoice_bot.state_store import StateStore
 
 
 def _email(uid: str, message_id: str, received_at: datetime) -> ParsedEmail:
@@ -73,3 +74,26 @@ def test_process_cycle_skips_previously_processed_messages(tmp_path, monkeypatch
     saved_state = state_path.read_text(encoding="utf-8")
     assert '"uid-1:<msg-1@example.com>"' in saved_state
     assert '"uid-2:<msg-2@example.com>"' in saved_state
+
+
+
+def test_finalize_processed_email_flushes_state_immediately(tmp_path):
+    state_path = tmp_path / "processed_state.json"
+    store = StateStore(state_path)
+    summary = ProcessSummary()
+
+    _finalize_processed_email(
+        summary,
+        store,
+        "uid-3:<msg-3@example.com>",
+        None,
+        False,
+        "uid-3",
+    )
+
+    reloaded = StateStore(state_path)
+    reloaded.load()
+
+    assert summary.processed == 1
+    assert state_path.exists()
+    assert reloaded.has("uid-3:<msg-3@example.com>")

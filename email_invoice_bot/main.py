@@ -16,6 +16,7 @@ from .attachment_processor import AttachmentProcessor
 from .config import AppConfig
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
+from .print_job_store import PendingPrintJob, PrintJobStore
 from .printnode_client import PrintNodeClient
 from .state_store import StateStore
 from .storage import DailyPdfStorage
@@ -64,7 +65,10 @@ def _fetch_emails_imap(config: AppConfig) -> list[ParsedEmail]:
 
 
 def _move_to_print_bucket(file_path: Path, bucket: str) -> Path:
-    target_dir = file_path.parent / bucket
+    base_dir = file_path.parent
+    if base_dir.name in {"druck_erfolg", "druck_fehler", "druck_ausstehend"}:
+        base_dir = base_dir.parent
+    target_dir = base_dir / bucket
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / file_path.name
     if target_path.exists():
@@ -94,6 +98,7 @@ def _finalize_processed_email(
 ) -> None:
     summary.processed += 1
     state_store.add(state_key)
+    state_store.flush()
     if graph_client is None or not graph_mark_read:
         return
     try:
@@ -101,6 +106,48 @@ def _finalize_processed_email(
         LOGGER.info("Marked message read graph_id=%s", graph_message_id)
     except Exception as exc:
         LOGGER.warning("Mark read failed graph_id=%s error=%s", graph_message_id, exc)
+
+
+def _reconcile_pending_print_jobs(
+    print_client: PrintNodeClient,
+    job_store: PrintJobStore,
+    summary: ProcessSummary,
+) -> None:
+    for job in job_store.items():
+        job_id = job.job_id
+        try:
+            info = print_client.get_printjob(job_id)
+        except Exception as exc:
+            LOGGER.warning("Print job lookup failed job_id=%s error=%s", job_id, exc)
+            continue
+
+        state = (info.get("state") or "").lower()
+        if state in {"queued", "new", "sent"}:
+            continue
+
+        file_path = Path(job.file_path)
+        if not file_path.exists():
+            LOGGER.warning("Pending print file missing job_id=%s file=%s", job_id, job.file_path)
+            job_store.remove(job_id)
+            job_store.flush()
+            continue
+
+        if state == "done":
+            moved = _move_to_print_bucket(file_path, "druck_erfolg")
+            summary.printed_jobs += 1
+            LOGGER.info("Print done job_id=%s moved_to=%s", job_id, moved)
+            job_store.remove(job_id)
+            job_store.flush()
+            continue
+
+        if state == "error":
+            moved = _move_to_print_bucket(file_path, "druck_fehler")
+            LOGGER.warning("Print error job_id=%s moved_to=%s", job_id, moved)
+            job_store.remove(job_id)
+            job_store.flush()
+            continue
+
+        LOGGER.info("Print job unknown state job_id=%s state=%s", job_id, state)
 
 
 def process_cycle(config: AppConfig) -> ProcessSummary:
@@ -118,10 +165,12 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             client_secret=config.graph_client_secret,
             mailbox=config.graph_mailbox,
         )
+        LOGGER.info("Cycle graph fetch start mailbox=%s lookback_hours=%s max_count=%s", config.graph_mailbox, config.graph_message_lookback_hours, config.max_emails_per_cycle)
         emails = graph_client.fetch_recent_messages(
             config.max_emails_per_cycle,
             config.graph_message_lookback_hours,
         )
+        LOGGER.info("Cycle graph fetch done mailbox=%s fetched_emails=%s", config.graph_mailbox, len(emails))
     else:
         emails = _fetch_emails_imap(config)
 
@@ -134,6 +183,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         allowlist=config.link_domain_allowlist,
     )
     print_client = None
+    job_store = None
     if config.print_enabled:
         if not config.printnode_api_key:
             raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_API_KEY is missing")
@@ -143,6 +193,9 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             api_key=config.printnode_api_key,
             printer_id=config.printnode_printer_id,
         )
+        job_store = PrintJobStore(Path("state/pending_print_jobs.json"))
+        job_store.load()
+        _reconcile_pending_print_jobs(print_client, job_store, summary)
     print_not_before = _parse_not_before_utc(config.print_not_before_utc)
 
     for email_obj in emails:
@@ -195,8 +248,17 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             for file_path in dict.fromkeys(files_to_print):
                 try:
                     job_id = print_client.submit_pdf(file_path)
-                    moved = _move_to_print_bucket(file_path, "druck_erfolg")
-                    summary.printed_jobs += 1
+                    moved = _move_to_print_bucket(file_path, "druck_ausstehend")
+                    if job_store is not None:
+                        job_store.add(
+                            PendingPrintJob(
+                                job_id=int(job_id),
+                                file_path=str(moved),
+                                base_dir=str(moved.parent.parent),
+                                created_utc=datetime.now(timezone.utc).isoformat(),
+                            )
+                        )
+                        job_store.flush()
                     LOGGER.info(
                         "Print submitted uid=%s file=%s job_id=%s moved_to=%s",
                         email_obj.uid,
@@ -231,6 +293,10 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             config.graph_mark_read,
             email_obj.uid,
         )
+
+    if print_client is not None and job_store is not None:
+        _reconcile_pending_print_jobs(print_client, job_store, summary)
+        job_store.flush()
 
     state_store.flush()
     return summary

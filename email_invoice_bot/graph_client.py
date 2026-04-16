@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -39,8 +40,11 @@ class GraphClient:
             f"&grant_type=client_credentials"
         ).encode()
         req = Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        started = time.monotonic()
+        LOGGER.info("Graph token request start mailbox=%s", self.mailbox)
         with urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
+        LOGGER.info("Graph token request done mailbox=%s duration_s=%.2f", self.mailbox, time.monotonic() - started)
         return data["access_token"]
 
     def _get_token(self) -> str:
@@ -51,10 +55,15 @@ class GraphClient:
     def _api_get(self, path: str) -> Any:
         url = f"{GRAPH_BASE}{path}"
         req = Request(url, headers={"Authorization": f"Bearer {self._get_token()}"})
+        started = time.monotonic()
+        LOGGER.info("Graph GET start path=%s", path)
         try:
             with urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read())
-        except Exception:
+                payload = json.loads(resp.read())
+            LOGGER.info("Graph GET done path=%s duration_s=%.2f", path, time.monotonic() - started)
+            return payload
+        except Exception as exc:
+            LOGGER.warning("Graph GET failed path=%s duration_s=%.2f error=%s", path, time.monotonic() - started, exc)
             self._token = None
             raise
 
@@ -109,7 +118,10 @@ class GraphClient:
 
     def _fetch_attachments(self, message_id: str) -> list[ParsedAttachment]:
         user = quote(self.mailbox)
-        data = self._api_get(f"/users/{user}/messages/{message_id}/attachments")
+        mid = quote(message_id, safe="")
+        started = time.monotonic()
+        LOGGER.info("Graph attachment fetch start mailbox=%s message_id=%s", self.mailbox, message_id)
+        data = self._api_get(f"/users/{user}/messages/{mid}/attachments")
         attachments: list[ParsedAttachment] = []
         for att in data.get("value", []):
             if att.get("@odata.type", "") != "#microsoft.graph.fileAttachment":
@@ -125,6 +137,7 @@ class GraphClient:
                     payload=content_bytes,
                     inline=inline,
                 ))
+        LOGGER.info("Graph attachment fetch done mailbox=%s message_id=%s attachment_count=%s duration_s=%.2f", self.mailbox, message_id, len(attachments), time.monotonic() - started)
         return attachments
 
     def fetch_recent_messages(self, max_count: int, lookback_hours: int) -> list[ParsedEmail]:
@@ -138,13 +151,17 @@ class GraphClient:
             "$top": str(max_count),
             "$select": select,
         })
-        path = f"/users/{user}/messages?{qs}"
+        path = f"/users/{user}/mailFolders/inbox/messages?{qs}"
+        LOGGER.info("Graph inbox fetch start mailbox=%s lookback_hours=%s max_count=%s", self.mailbox, lookback_hours, max_count)
         data = self._api_get(path)
+        raw_messages = data.get("value", [])
+        LOGGER.info("Graph inbox fetch done mailbox=%s message_count=%s", self.mailbox, len(raw_messages))
         results: list[ParsedEmail] = []
 
-        for msg in data.get("value", []):
+        for index, msg in enumerate(raw_messages, start=1):
             msg_id = msg.get("id", "")
             subject = msg.get("subject", "").strip()
+            LOGGER.info("Graph message parse start mailbox=%s index=%s/%s message_id=%s subject=%s has_attachments=%s", self.mailbox, index, len(raw_messages), msg_id, subject, msg.get("hasAttachments", False))
             from_obj = msg.get("from", {}).get("emailAddress", {})
             sender = from_obj.get("address", from_obj.get("name", ""))
             received_at = self._parse_datetime(msg.get("receivedDateTime", ""))
@@ -169,5 +186,6 @@ class GraphClient:
                 links=links,
                 attachments=attachments,
             ))
+            LOGGER.info("Graph message parse done mailbox=%s index=%s/%s message_id=%s attachments=%s links=%s", self.mailbox, index, len(raw_messages), msg_id, len(attachments), len(links))
 
         return results
