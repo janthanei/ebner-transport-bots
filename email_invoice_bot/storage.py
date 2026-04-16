@@ -19,7 +19,7 @@ class DailyPdfStorage:
         return cleaned or fallback
 
     def get_day_dir(self, received_at: datetime) -> Path:
-        day_dir = self.output_root / received_at.strftime("%Y-%m-%d")
+        day_dir = self.output_root / "Rechnungen" / received_at.strftime("%Y-%m-%d")
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir
 

@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import logging
 import signal
+import shutil
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .graph_client import GraphClient
 
 from .attachment_processor import AttachmentProcessor
 from .config import AppConfig
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
+from .printnode_client import PrintNodeClient
+from .state_store import StateStore
 from .storage import DailyPdfStorage
 from .web_downloader import WebDownloader
 
@@ -22,6 +31,7 @@ class ProcessSummary:
     processed: int = 0
     saved_attachments: int = 0
     downloaded_from_web: int = 0
+    printed_jobs: int = 0
 
 
 def _handle_signal(signum, _frame) -> None:
@@ -35,18 +45,6 @@ def setup_logging(level: str) -> None:
         level=getattr(logging, level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-
-
-def _fetch_emails_graph(config: AppConfig) -> list[ParsedEmail]:
-    from .graph_client import GraphClient
-
-    client = GraphClient(
-        tenant_id=config.graph_tenant_id,
-        client_id=config.graph_client_id,
-        client_secret=config.graph_client_secret,
-        mailbox=config.graph_mailbox,
-    )
-    return client.fetch_recent_messages(config.max_emails_per_cycle)
 
 
 def _fetch_emails_imap(config: AppConfig) -> list[ParsedEmail]:
@@ -65,11 +63,65 @@ def _fetch_emails_imap(config: AppConfig) -> list[ParsedEmail]:
     return emails
 
 
+def _move_to_print_bucket(file_path: Path, bucket: str) -> Path:
+    target_dir = file_path.parent / bucket
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / file_path.name
+    if target_path.exists():
+        target_path.unlink()
+    shutil.move(str(file_path), str(target_path))
+    return target_path
+
+
+def _parse_not_before_utc(value: str) -> datetime | None:
+    raw = value.strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _finalize_processed_email(
+    summary: ProcessSummary,
+    state_store: StateStore,
+    state_key: str,
+    graph_client: GraphClient | None,
+    graph_mark_read: bool,
+    graph_message_id: str,
+) -> None:
+    summary.processed += 1
+    state_store.add(state_key)
+    if graph_client is None or not graph_mark_read:
+        return
+    try:
+        graph_client.mark_message_read(graph_message_id)
+        LOGGER.info("Marked message read graph_id=%s", graph_message_id)
+    except Exception as exc:
+        LOGGER.warning("Mark read failed graph_id=%s error=%s", graph_message_id, exc)
+
+
 def process_cycle(config: AppConfig) -> ProcessSummary:
     summary = ProcessSummary()
+    state_store = StateStore(Path("state/processed_state.json"))
+    state_store.load()
 
+    graph_client = None
     if config.mail_provider == "graph":
-        emails = _fetch_emails_graph(config)
+        from .graph_client import GraphClient
+
+        graph_client = GraphClient(
+            tenant_id=config.graph_tenant_id,
+            client_id=config.graph_client_id,
+            client_secret=config.graph_client_secret,
+            mailbox=config.graph_mailbox,
+        )
+        emails = graph_client.fetch_recent_messages(
+            config.max_emails_per_cycle,
+            config.graph_message_lookback_hours,
+        )
     else:
         emails = _fetch_emails_imap(config)
 
@@ -81,16 +133,34 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         dry_run=config.dry_run,
         allowlist=config.link_domain_allowlist,
     )
+    print_client = None
+    if config.print_enabled:
+        if not config.printnode_api_key:
+            raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_API_KEY is missing")
+        if config.printnode_printer_id <= 0:
+            raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_PRINTER_ID is invalid")
+        print_client = PrintNodeClient(
+            api_key=config.printnode_api_key,
+            printer_id=config.printnode_printer_id,
+        )
+    print_not_before = _parse_not_before_utc(config.print_not_before_utc)
 
     for email_obj in emails:
+        state_key = StateStore.build_key(email_obj.uid, email_obj.message_id)
+        if state_store.has(state_key):
+            LOGGER.debug("Skipping already processed email uid=%s", email_obj.uid)
+            continue
+
         saved_paths = attachment_processor.process(email_obj)
         summary.saved_attachments += len(saved_paths)
+        files_to_print = list(saved_paths)
 
         target_links = filter_target_links(email_obj.links, config.link_substring)
         for url in target_links:
             day_dir = storage.get_day_dir(email_obj.received_at)
             result = web_downloader.scan_and_download(url=url, output_dir=day_dir)
             summary.downloaded_from_web += len(result.downloaded_paths)
+            files_to_print.extend(result.downloaded_paths)
             LOGGER.info(
                 "Link processed uid=%s url=%s scanned=%s cmr_found=%s downloaded=%s",
                 email_obj.uid,
@@ -100,8 +170,69 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 len(result.downloaded_paths),
             )
 
-        summary.processed += 1
+        if print_client is not None:
+            should_print = True
+            if print_not_before is not None:
+                received_utc = email_obj.received_at.astimezone(timezone.utc)
+                should_print = received_utc >= print_not_before
+                if not should_print:
+                    LOGGER.info(
+                        "Skipping print before cutoff uid=%s received=%s cutoff=%s",
+                        email_obj.uid,
+                        received_utc.isoformat(),
+                        print_not_before.isoformat(),
+                    )
+            if not should_print:
+                _finalize_processed_email(
+                    summary,
+                    state_store,
+                    state_key,
+                    graph_client,
+                    config.graph_mark_read,
+                    email_obj.uid,
+                )
+                continue
+            for file_path in dict.fromkeys(files_to_print):
+                try:
+                    job_id = print_client.submit_pdf(file_path)
+                    moved = _move_to_print_bucket(file_path, "druck_erfolg")
+                    summary.printed_jobs += 1
+                    LOGGER.info(
+                        "Print submitted uid=%s file=%s job_id=%s moved_to=%s",
+                        email_obj.uid,
+                        file_path.name,
+                        job_id,
+                        moved,
+                    )
+                except Exception as exc:
+                    try:
+                        moved = _move_to_print_bucket(file_path, "druck_fehler")
+                        LOGGER.exception(
+                            "Print submission failed uid=%s file=%s moved_to=%s error=%s",
+                            email_obj.uid,
+                            file_path.name,
+                            moved,
+                            exc,
+                        )
+                    except Exception as move_exc:
+                        LOGGER.exception(
+                            "Print submission failed uid=%s file=%s and move failed error=%s move_error=%s",
+                            email_obj.uid,
+                            file_path.name,
+                            exc,
+                            move_exc,
+                        )
 
+        _finalize_processed_email(
+            summary,
+            state_store,
+            state_key,
+            graph_client,
+            config.graph_mark_read,
+            email_obj.uid,
+        )
+
+    state_store.flush()
     return summary
 
 

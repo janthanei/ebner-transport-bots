@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -58,6 +58,30 @@ class GraphClient:
             self._token = None
             raise
 
+    def _api_patch(self, path: str, body: dict[str, Any]) -> None:
+        url = f"{GRAPH_BASE}{path}"
+        payload = json.dumps(body).encode("utf-8")
+        req = Request(
+            url,
+            data=payload,
+            method="PATCH",
+            headers={
+                "Authorization": f"Bearer {self._get_token()}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(req, timeout=30) as resp:
+                resp.read()
+        except Exception:
+            self._token = None
+            raise
+
+    def mark_message_read(self, message_id: str) -> None:
+        user = quote(self.mailbox)
+        mid = quote(message_id, safe="")
+        self._api_patch(f"/users/{user}/messages/{mid}", {"isRead": True})
+
     @staticmethod
     def _parse_datetime(value: str) -> datetime:
         cleaned = value.rstrip("Z") if value.endswith("Z") else value
@@ -103,11 +127,13 @@ class GraphClient:
                 ))
         return attachments
 
-    def fetch_recent_messages(self, max_count: int) -> list[ParsedEmail]:
+    def fetch_recent_messages(self, max_count: int, lookback_hours: int) -> list[ParsedEmail]:
         user = quote(self.mailbox)
+        since = datetime.now(timezone.utc) - timedelta(hours=max(1, lookback_hours))
+        since_str = since.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
         select = "id,subject,from,receivedDateTime,body,hasAttachments,isRead,internetMessageId"
         qs = urlencode({
-            "$filter": "isRead eq false",
+            "$filter": f"receivedDateTime ge {since_str}",
             "$orderby": "receivedDateTime desc",
             "$top": str(max_count),
             "$select": select,

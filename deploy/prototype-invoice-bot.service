@@ -1,0 +1,24 @@
+[Unit]
+Description=Prototype Invoice Bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/prototype
+EnvironmentFile=/root/prototype/.env
+Environment=PYTHONPATH=/root/prototype
+Environment=LOG_LEVEL=WARNING
+ExecStart=/usr/bin/python3 -m email_invoice_bot.main
+Restart=always
+RestartSec=20
+StandardOutput=null
+StandardError=journal
+SyslogIdentifier=prototype-invoice-bot
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

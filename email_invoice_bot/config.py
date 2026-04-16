@@ -40,6 +40,8 @@ class AppConfig:
     graph_client_id: str
     graph_client_secret: str
     graph_mailbox: str
+    graph_message_lookback_hours: int
+    graph_mark_read: bool
 
     # IMAP settings (fallback/prototype)
     imap_host: str
@@ -56,6 +58,10 @@ class AppConfig:
     cmr_keyword: str
     playwright_headless: bool
     dry_run: bool
+    print_enabled: bool
+    printnode_api_key: str
+    printnode_printer_id: int
+    print_not_before_utc: str
     log_level: str
 
     @classmethod
@@ -68,6 +74,8 @@ class AppConfig:
             graph_client_id=os.getenv("GRAPH_CLIENT_ID", ""),
             graph_client_secret=os.getenv("GRAPH_CLIENT_SECRET", ""),
             graph_mailbox=os.getenv("GRAPH_MAILBOX", ""),
+            graph_message_lookback_hours=_get_int("GRAPH_MESSAGE_LOOKBACK_HOURS", 72),
+            graph_mark_read=_get_bool("GRAPH_MARK_READ", default=True),
             imap_host=os.getenv("IMAP_HOST", ""),
             imap_port=_get_int("IMAP_PORT", 993),
             imap_user=os.getenv("IMAP_USER", ""),
@@ -81,5 +89,9 @@ class AppConfig:
             cmr_keyword=os.getenv("CMR_KEYWORD", "CMR"),
             playwright_headless=not _get_bool("PLAYWRIGHT_HEADFUL", default=False),
             dry_run=_get_bool("DRY_RUN", default=False),
+            print_enabled=_get_bool("PRINT_ENABLED", default=False),
+            printnode_api_key=os.getenv("PRINTNODE_API_KEY", "").strip(),
+            printnode_printer_id=_get_int("PRINTNODE_PRINTER_ID", 0),
+            print_not_before_utc=os.getenv("PRINT_NOT_BEFORE_UTC", "").strip(),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )

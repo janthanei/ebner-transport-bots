@@ -1,0 +1,6 @@
+[Unit]
+Description=Start Prototype Invoice Bot at scheduled time
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl start prototype-invoice-bot.service

@@ -1,0 +1,11 @@
+[Unit]
+Description=Delayed activation for Prototype Invoice Bot
+
+[Timer]
+OnCalendar=2026-04-15 10:04:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=prototype-invoice-bot-start.service
+
+[Install]
+WantedBy=timers.target
