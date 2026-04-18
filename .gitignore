@@ -4,3 +4,5 @@ __pycache__/
 output/
 state/
 *.tmp
+
+maintenance_snapshots/
