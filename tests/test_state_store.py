@@ -47,6 +47,9 @@ def test_process_cycle_skips_previously_processed_messages(tmp_path, monkeypatch
             def fetch_recent_messages(self, _max_count, _lookback_hours):
                 return emails
 
+            def fetch_message_attachments(self, _message_id):
+                return []
+
             def mark_message_read(self, _message_id):
                 pass
 

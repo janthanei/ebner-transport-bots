@@ -204,6 +204,9 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             LOGGER.debug("Skipping already processed email uid=%s", email_obj.uid)
             continue
 
+        if graph_client is not None and email_obj.has_attachments and not email_obj.attachments:
+            email_obj.attachments = graph_client.fetch_message_attachments(email_obj.uid)
+
         saved_paths = attachment_processor.process(email_obj)
         summary.saved_attachments += len(saved_paths)
         files_to_print = list(saved_paths)

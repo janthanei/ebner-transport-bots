@@ -31,6 +31,7 @@ class ParsedEmail:
     body_text: str
     links: list[str]
     attachments: list[ParsedAttachment]
+    has_attachments: bool = False
 
 
 def _to_text_from_html(html: str) -> str:
@@ -115,5 +116,6 @@ def parse_email(uid: str, raw_message: bytes) -> ParsedEmail:
         body_text=body_text,
         links=links,
         attachments=attachments,
+        has_attachments=bool(attachments),
     )
 

@@ -140,6 +140,13 @@ class GraphClient:
         LOGGER.info("Graph attachment fetch done mailbox=%s message_id=%s attachment_count=%s duration_s=%.2f", self.mailbox, message_id, len(attachments), time.monotonic() - started)
         return attachments
 
+    def fetch_message_attachments(self, message_id: str) -> list[ParsedAttachment]:
+        try:
+            return self._fetch_attachments(message_id)
+        except Exception as exc:
+            LOGGER.exception("Failed fetching attachments msg=%s error=%s", message_id, exc)
+            return []
+
     def fetch_recent_messages(self, max_count: int, lookback_hours: int) -> list[ParsedEmail]:
         user = quote(self.mailbox)
         since = datetime.now(timezone.utc) - timedelta(hours=max(1, lookback_hours))
@@ -169,12 +176,7 @@ class GraphClient:
 
             body_text, links = self._extract_body_and_links(msg)
 
-            attachments: list[ParsedAttachment] = []
-            if msg.get("hasAttachments", False):
-                try:
-                    attachments = self._fetch_attachments(msg_id)
-                except Exception as exc:
-                    LOGGER.exception("Failed fetching attachments msg=%s error=%s", msg_id, exc)
+            has_attachments = bool(msg.get("hasAttachments", False))
 
             results.append(ParsedEmail(
                 uid=msg_id,
@@ -184,8 +186,9 @@ class GraphClient:
                 received_at=received_at,
                 body_text=body_text,
                 links=links,
-                attachments=attachments,
+                attachments=[],
+                has_attachments=has_attachments,
             ))
-            LOGGER.info("Graph message parse done mailbox=%s index=%s/%s message_id=%s attachments=%s links=%s", self.mailbox, index, len(raw_messages), msg_id, len(attachments), len(links))
+            LOGGER.info("Graph message parse done mailbox=%s index=%s/%s message_id=%s has_attachments=%s links=%s", self.mailbox, index, len(raw_messages), msg_id, has_attachments, len(links))
 
         return results
