@@ -18,6 +18,7 @@ from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
 from .print_job_store import PendingPrintJob, PrintJobStore
 from .printnode_client import PrintNodeClient
+from .retention import purge_old_output
 from .state_store import StateStore
 from .storage import DailyPdfStorage
 from .web_downloader import WebDownloader
@@ -154,6 +155,17 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
     summary = ProcessSummary()
     state_store = StateStore(Path("state/processed_state.json"))
     state_store.load()
+    retention = purge_old_output(
+        config.output_root,
+        config.retention_delete_after_days,
+        pending_jobs_file=Path("state/pending_print_jobs.json"),
+    )
+    if retention.deleted_days or retention.skipped_pending_days:
+        LOGGER.info(
+            "Retention complete deleted_days=%s skipped_pending_days=%s",
+            retention.deleted_days,
+            retention.skipped_pending_days,
+        )
 
     graph_client = None
     if config.mail_provider == "graph":

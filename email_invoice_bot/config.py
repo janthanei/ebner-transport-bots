@@ -62,6 +62,7 @@ class AppConfig:
     printnode_api_key: str
     printnode_printer_id: int
     print_not_before_utc: str
+    retention_delete_after_days: int
     log_level: str
 
     @classmethod
@@ -93,5 +94,6 @@ class AppConfig:
             printnode_api_key=os.getenv("PRINTNODE_API_KEY", "").strip(),
             printnode_printer_id=_get_int("PRINTNODE_PRINTER_ID", 0),
             print_not_before_utc=os.getenv("PRINT_NOT_BEFORE_UTC", "").strip(),
+            retention_delete_after_days=_get_int("RETENTION_DELETE_AFTER_DAYS", 0),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )
