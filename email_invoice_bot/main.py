@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from .attachment_processor import AttachmentProcessor
 from .config import AppConfig
+from .duplicate_store import DuplicateStore
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
 from .print_job_store import PendingPrintJob, PrintJobStore
@@ -94,19 +95,29 @@ def _finalize_processed_email(
     state_store: StateStore,
     state_key: str,
     graph_client: GraphClient | None,
-    graph_mark_read: bool,
+    mark_read: bool,
     graph_message_id: str,
 ) -> None:
     summary.processed += 1
     state_store.add(state_key)
     state_store.flush()
-    if graph_client is None or not graph_mark_read:
+    if graph_client is None or not mark_read:
         return
     try:
         graph_client.mark_message_read(graph_message_id)
         LOGGER.info("Marked message read graph_id=%s", graph_message_id)
     except Exception as exc:
         LOGGER.warning("Mark read failed graph_id=%s error=%s", graph_message_id, exc)
+
+
+def _record_duplicate_history(
+    duplicate_store: DuplicateStore,
+    subject: str,
+    file_paths: list[Path],
+) -> None:
+    for file_path in dict.fromkeys(file_paths):
+        duplicate_store.add(subject, file_path.name)
+    duplicate_store.flush()
 
 
 def _reconcile_pending_print_jobs(
@@ -155,6 +166,8 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
     summary = ProcessSummary()
     state_store = StateStore(Path("state/processed_state.json"))
     state_store.load()
+    duplicate_store = DuplicateStore(Path("state/duplicate_history.json"))
+    duplicate_store.load()
     retention = purge_old_output(
         config.output_root,
         config.retention_delete_after_days,
@@ -216,17 +229,67 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             LOGGER.debug("Skipping already processed email uid=%s", email_obj.uid)
             continue
 
+        if duplicate_store.has_subject(email_obj.subject):
+            LOGGER.info("Skipping duplicate email subject uid=%s subject=%s", email_obj.uid, email_obj.subject)
+            _finalize_processed_email(
+                summary,
+                state_store,
+                state_key,
+                graph_client,
+                False,
+                email_obj.uid,
+            )
+            continue
+
         if graph_client is not None and email_obj.has_attachments and not email_obj.attachments:
             email_obj.attachments = graph_client.fetch_message_attachments(email_obj.uid)
 
-        saved_paths = attachment_processor.process(email_obj)
+        accepted_output_names: set[str] = set()
+        filtered_attachments = []
+        for attachment in email_obj.attachments:
+            if attachment.inline:
+                continue
+            if not attachment_processor.is_printable_filename(attachment.filename):
+                continue
+            output_name = attachment_processor.output_filename(attachment.filename)
+            if output_name in accepted_output_names or duplicate_store.has_filename(output_name):
+                LOGGER.info(
+                    "Skipping duplicate attachment uid=%s filename=%s output_name=%s",
+                    email_obj.uid,
+                    attachment.filename,
+                    output_name,
+                )
+                continue
+            accepted_output_names.add(output_name)
+            filtered_attachments.append(attachment)
+
+        saved_paths = attachment_processor.process(email_obj, attachments=filtered_attachments)
         summary.saved_attachments += len(saved_paths)
         files_to_print = list(saved_paths)
 
         target_links = filter_target_links(email_obj.links, config.link_substring)
+        reserved_download_names = set(accepted_output_names)
+
+        def _should_download(candidate) -> bool:
+            output_name = storage.build_filename(candidate.filename_hint)
+            if output_name in reserved_download_names or duplicate_store.has_filename(output_name):
+                LOGGER.info(
+                    "Skipping duplicate download uid=%s hint=%s output_name=%s",
+                    email_obj.uid,
+                    candidate.filename_hint,
+                    output_name,
+                )
+                return False
+            reserved_download_names.add(output_name)
+            return True
+
         for url in target_links:
             day_dir = storage.get_day_dir(email_obj.received_at)
-            result = web_downloader.scan_and_download(url=url, output_dir=day_dir)
+            result = web_downloader.scan_and_download(
+                url=url,
+                output_dir=day_dir,
+                should_download=_should_download,
+            )
             summary.downloaded_from_web += len(result.downloaded_paths)
             files_to_print.extend(result.downloaded_paths)
             LOGGER.info(
@@ -237,6 +300,10 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 result.cmr_found,
                 len(result.downloaded_paths),
             )
+
+        extracted_files = list(dict.fromkeys(files_to_print))
+        if extracted_files:
+            _record_duplicate_history(duplicate_store, email_obj.subject, extracted_files)
 
         if print_client is not None:
             should_print = True
@@ -256,11 +323,11 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                     state_store,
                     state_key,
                     graph_client,
-                    config.graph_mark_read,
+                    config.graph_mark_read and bool(extracted_files),
                     email_obj.uid,
                 )
                 continue
-            for file_path in dict.fromkeys(files_to_print):
+            for file_path in extracted_files:
                 try:
                     job_id = print_client.submit_pdf(file_path)
                     moved = _move_to_print_bucket(file_path, "druck_ausstehend")
@@ -305,7 +372,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             state_store,
             state_key,
             graph_client,
-            config.graph_mark_read,
+            config.graph_mark_read and bool(extracted_files),
             email_obj.uid,
         )
 
@@ -313,6 +380,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         _reconcile_pending_print_jobs(print_client, job_store, summary)
         job_store.flush()
 
+    duplicate_store.flush()
     state_store.flush()
     return summary
 

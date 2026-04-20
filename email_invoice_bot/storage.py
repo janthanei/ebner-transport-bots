@@ -18,14 +18,18 @@ class DailyPdfStorage:
         cleaned = cleaned.strip("._")
         return cleaned or fallback
 
+    @classmethod
+    def normalize_pdf_filename(cls, original_name: str) -> str:
+        original_base = cls.sanitize(Path(original_name).stem, fallback="attachment")[:120]
+        return f"{original_base}.pdf"
+
     def get_day_dir(self, received_at: datetime) -> Path:
         day_dir = self.output_root / "Rechnungen" / received_at.strftime("%Y-%m-%d")
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir
 
     def build_filename(self, original_name: str) -> str:
-        original_base = self.sanitize(Path(original_name).stem, fallback="attachment")[:120]
-        return f"{original_base}.pdf"
+        return self.normalize_pdf_filename(original_name)
 
     def write_pdf_bytes(
         self,
@@ -41,4 +45,3 @@ class DailyPdfStorage:
         tmp_path.write_bytes(pdf_bytes)
         tmp_path.replace(target)
         return target
-

@@ -31,9 +31,20 @@ class AttachmentProcessor:
             rgb.save(out, format="PDF")
             return out.getvalue()
 
-    def process(self, email_obj: ParsedEmail) -> list[Path]:
+    @classmethod
+    def is_printable_filename(cls, filename: str) -> bool:
+        return cls._ext(filename) in PDF_EXTENSIONS | IMAGE_EXTENSIONS
+
+    def output_filename(self, filename: str) -> str:
+        return self.storage.build_filename(filename)
+
+    def process(
+        self,
+        email_obj: ParsedEmail,
+        attachments: list[ParsedAttachment] | None = None,
+    ) -> list[Path]:
         saved_paths: list[Path] = []
-        for attachment in email_obj.attachments:
+        for attachment in attachments or email_obj.attachments:
             if attachment.inline:
                 continue
 
@@ -63,4 +74,3 @@ class AttachmentProcessor:
                     exc,
                 )
         return saved_paths
-

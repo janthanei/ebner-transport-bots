@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urljoin
 
 from .link_extractor import is_domain_allowed
@@ -124,7 +125,12 @@ class WebDownloader:
             )
         return candidates
 
-    def scan_and_download(self, url: str, output_dir: Path) -> DownloadResult:
+    def scan_and_download(
+        self,
+        url: str,
+        output_dir: Path,
+        should_download: Callable[[PdfCandidate], bool] | None = None,
+    ) -> DownloadResult:
         if not is_domain_allowed(url, self.allowlist):
             LOGGER.warning("Skipping URL outside allowlist url=%s", url)
             return DownloadResult(scanned_candidates=0, cmr_found=False, downloaded_paths=[])
@@ -157,6 +163,9 @@ class WebDownloader:
                 )
 
             for candidate in candidates:
+                if should_download is not None and not should_download(candidate):
+                    LOGGER.info("Skipping duplicate download candidate hint=%s href=%s", candidate.filename_hint, candidate.href)
+                    continue
                 file_name = self._safe_name(candidate.filename_hint, candidate.index)
                 target_path = output_dir / file_name
                 if target_path.exists():
@@ -195,4 +204,3 @@ class WebDownloader:
                 cmr_found=cmr_found,
                 downloaded_paths=downloaded,
             )
-
