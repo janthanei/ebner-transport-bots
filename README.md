@@ -1,4 +1,4 @@
-# Prototype Invoice Bot
+# Invoice Bot
 
 This project polls a mailbox, extracts invoice-related documents, saves them into dated output folders, and optionally submits PDFs to PrintNode for automatic printing.
 
@@ -12,9 +12,10 @@ The production deployment currently runs on Outlook / Microsoft Graph and watche
 4. Convert image attachments (`jpg`, `jpeg`, `png`) to PDF before saving.
 5. Scan matching links from the mail body.
 6. Open matching links with Playwright and download linked PDFs when the CMR rule matches.
-7. Optionally submit resulting PDFs to PrintNode.
-8. Track pending print jobs until they move to success or error buckets.
-9. Mark the message as read in Graph after successful processing when enabled.
+7. Skip saving duplicate items when either the normalized subject or normalized filename was already processed in the last 7 days.
+8. Optionally submit resulting PDFs to PrintNode.
+9. Track pending print jobs until they move to success or error buckets.
+10. Mark the message as read in Graph only when the bot actually extracted at least one printable file from that email.
 
 ## Providers
 
@@ -31,12 +32,12 @@ Current production usage is `graph`.
 - `tests/`: unit tests
 - `deploy/`: systemd unit/timer files
 - `state/processed_state.json`: dedup state for already processed messages
+- `state/duplicate_history.json`: 7-day duplicate history for subject/filename suppression
 - `state/pending_print_jobs.json`: pending PrintNode jobs waiting for reconciliation
 - `output/Rechnungen/YYYY-MM-DD/`: saved and downloaded PDFs
 - `output/Rechnungen/YYYY-MM-DD/druck_ausstehend/`: submitted to printer, not yet confirmed done
 - `output/Rechnungen/YYYY-MM-DD/druck_erfolg/`: PrintNode reported `done`
 - `output/Rechnungen/YYYY-MM-DD/druck_fehler/`: PrintNode reported `error` or submission failed
-- `maintenance_snapshots/`: operational investigation and remediation snapshots
 
 ## Configuration
 
@@ -79,6 +80,10 @@ Important variables:
 - `PRINTNODE_API_KEY`
 - `PRINTNODE_PRINTER_ID`
 - `PRINT_NOT_BEFORE_UTC`: optional cutoff for printing only newer messages
+
+### Retention
+
+- `RETENTION_DELETE_AFTER_DAYS`: delete dated output folders older than this many days, but never while pending print jobs still exist for that day
 
 ### Logging
 
@@ -138,6 +143,14 @@ The key is built from:
 - Graph message id / IMAP UID
 - `internetMessageId` / `Message-ID` when available
 
+Printable duplicate suppression is tracked separately in `state/duplicate_history.json`.
+
+Current duplicate rules:
+
+- if the normalized email subject matches a processed record from the last 7 days, the email is skipped entirely
+- otherwise, individual printable files are skipped when the normalized output filename matches a processed record from the last 7 days
+- duplicate items are skipped before saving, so they do not overwrite existing files
+
 ### Mark As Read
 
 When `GRAPH_MARK_READ=true`, the bot calls:
@@ -146,6 +159,11 @@ When `GRAPH_MARK_READ=true`, the bot calls:
 - body: `{ "isRead": true }`
 
 This requires Microsoft Graph `Mail.ReadWrite` on the app registration.
+
+Current behavior is intentionally narrow:
+
+- mark as read only when at least one printable file was extracted from the email
+- leave the email unread when nothing printable was extracted or when the email was skipped as a duplicate
 
 ### Printing
 
@@ -173,6 +191,7 @@ This is intentional to avoid processing other folders such as Sent Items.
 The bot now flushes local state immediately when:
 
 - a message is finalized into processed state
+- duplicate history is updated
 - a pending print job is added
 - a pending print job is removed
 
@@ -205,7 +224,16 @@ Check:
 
 - service logs for `Marked message read` or `Mark read failed`
 - whether the Graph app really has `Mail.ReadWrite`
+- whether the email actually produced at least one printable file
 - whether unread Inbox messages also exist in `state/processed_state.json`
+
+### Files skipped as duplicates
+
+Check:
+
+- `state/duplicate_history.json`
+- service logs for `Skipping duplicate email subject`, `Skipping duplicate attachment`, or `Skipping duplicate download`
+- whether a generic subject or filename is matching a prior processed record within the last 7 days
 
 ### `druck_ausstehend` not clearing
 
@@ -235,10 +263,10 @@ Typical causes observed so far:
 
 - `email_invoice_bot/main.py`: main cycle, print reconciliation, state finalization
 - `email_invoice_bot/graph_client.py`: Graph fetch, attachments, mark-as-read
+- `email_invoice_bot/duplicate_store.py`: 7-day duplicate subject/filename history
 - `email_invoice_bot/storage.py`: dated output layout
 - `email_invoice_bot/print_job_store.py`: pending print job persistence
 - `email_invoice_bot/state_store.py`: processed message persistence
-- `CURRENT_STATUS.md`: older project status notes
 
 ## Caution
 
