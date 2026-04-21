@@ -44,7 +44,8 @@ class AttachmentProcessor:
         attachments: list[ParsedAttachment] | None = None,
     ) -> list[Path]:
         saved_paths: list[Path] = []
-        for attachment in attachments or email_obj.attachments:
+        candidates = email_obj.attachments if attachments is None else attachments
+        for attachment in candidates:
             if attachment.inline:
                 continue
 
