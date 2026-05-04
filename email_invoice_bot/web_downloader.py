@@ -9,6 +9,7 @@ from typing import Callable
 from urllib.parse import urljoin
 
 from .link_extractor import is_domain_allowed
+from .storage import DailyPdfStorage
 
 
 LOGGER = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ class WebDownloader:
             return path
         with Image.open(path) as image:
             rgb = image.convert("RGB")
-            pdf_path = path.with_suffix(".pdf")
+            pdf_path = DailyPdfStorage.unique_path(path.with_suffix(".pdf"))
             rgb.save(pdf_path, format="PDF")
         path.unlink(missing_ok=True)
         return pdf_path
@@ -84,7 +85,7 @@ class WebDownloader:
                 return target_path
             with Image.open(io.BytesIO(body)) as image:
                 rgb = image.convert("RGB")
-                pdf_path = target_path.with_suffix(".pdf")
+                pdf_path = DailyPdfStorage.unique_path(target_path.with_suffix(".pdf"))
                 rgb.save(pdf_path, format="PDF")
             return pdf_path
         target_path.write_bytes(body)
@@ -167,9 +168,7 @@ class WebDownloader:
                     LOGGER.info("Skipping duplicate download candidate hint=%s href=%s", candidate.filename_hint, candidate.href)
                     continue
                 file_name = self._safe_name(candidate.filename_hint, candidate.index)
-                target_path = output_dir / file_name
-                if target_path.exists():
-                    target_path.unlink()
+                target_path = DailyPdfStorage.unique_path(output_dir / file_name)
 
                 locator = page.locator("a").nth(candidate.index)
                 try:

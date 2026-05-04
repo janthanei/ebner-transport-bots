@@ -199,9 +199,9 @@ def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, mo
         '{\n'
         '  "records": [\n'
         '    {\n'
-        '      "processed_at_utc": "2026-04-19T08:00:00+00:00",\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
         '      "subject_key": "invoice a",\n'
-        '      "filename_key": "invoice.pdf"\n'
+        '      "filename_key": "1454020qbp.pdf"\n'
         "    }\n"
         "  ]\n"
         "}\n",
@@ -261,9 +261,9 @@ def test_process_cycle_skips_duplicate_filename_but_processes_new_attachment(tmp
         '{\n'
         '  "records": [\n'
         '    {\n'
-        '      "processed_at_utc": "2026-04-19T08:00:00+00:00",\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
         '      "subject_key": "older invoice",\n'
-        '      "filename_key": "invoice.pdf"\n'
+        '      "filename_key": "1454020qbp.pdf"\n'
         "    }\n"
         "  ]\n"
         "}\n",
@@ -280,7 +280,7 @@ def test_process_cycle_skips_duplicate_filename_but_processes_new_attachment(tmp
         links=[],
         attachments=[
             ParsedAttachment(
-                filename="invoice.pdf",
+                filename="1454020QBP.pdf",
                 content_type="application/pdf",
                 payload=b"%PDF-1.7 duplicate",
                 inline=False,
@@ -318,7 +318,7 @@ def test_process_cycle_skips_duplicate_filename_but_processes_new_attachment(tmp
     assert mark_calls == ["uid-1"]
 
 
-def test_process_cycle_skips_duplicate_only_attachments_without_saving_printing_or_marking_read(tmp_path, monkeypatch):
+def test_process_cycle_processes_generic_duplicate_filenames_for_new_subject(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MAIL_PROVIDER", "graph")
     monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
@@ -333,12 +333,12 @@ def test_process_cycle_skips_duplicate_only_attachments_without_saving_printing_
         '{\n'
         '  "records": [\n'
         '    {\n'
-        '      "processed_at_utc": "2026-04-19T08:00:00+00:00",\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
         '      "subject_key": "older invoice",\n'
         '      "filename_key": "faktura.pdf"\n'
         '    },\n'
         '    {\n'
-        '      "processed_at_utc": "2026-04-19T08:00:00+00:00",\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
         '      "subject_key": "older invoice",\n'
         '      "filename_key": "za_czniki.pdf"\n'
         "    }\n"
@@ -350,7 +350,7 @@ def test_process_cycle_skips_duplicate_only_attachments_without_saving_printing_
     email = ParsedEmail(
         uid="uid-1",
         message_id="<msg-1@example.com>",
-        subject="KOIMEX invoice",
+        subject="KOIMEX invoice 00943",
         sender="sender@example.com",
         received_at=datetime(2026, 4, 20, 9, 0, 0),
         body_text="hello",
@@ -402,9 +402,88 @@ def test_process_cycle_skips_duplicate_only_attachments_without_saving_printing_
 
     summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
 
+    assert summary == ProcessSummary(processed=1, saved_attachments=2, downloaded_from_web=0, printed_jobs=0)
+    assert print_calls == ["faktura.pdf", "za_czniki.pdf"]
+    assert mark_calls == ["uid-1"]
+    assert sorted(path.name for path in (tmp_path / "output").rglob("*.pdf")) == ["faktura.pdf", "za_czniki.pdf"]
+    duplicate_state = (state_dir / "duplicate_history.json").read_text(encoding="utf-8")
+    assert duplicate_state.count('"filename_key"') == 4
+
+
+def test_process_cycle_still_skips_distinctive_duplicate_only_attachments(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+    monkeypatch.setenv("PRINT_ENABLED", "true")
+    monkeypatch.setenv("PRINTNODE_API_KEY", "dummy-key")
+    monkeypatch.setenv("PRINTNODE_PRINTER_ID", "1")
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{\n'
+        '  "records": [\n'
+        '    {\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
+        '      "subject_key": "older invoice",\n'
+        '      "filename_key": "1454020qbp.pdf"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    email = ParsedEmail(
+        uid="uid-1",
+        message_id="<msg-1@example.com>",
+        subject="Another invoice",
+        sender="sender@example.com",
+        received_at=datetime(2026, 4, 20, 9, 0, 0),
+        body_text="hello",
+        links=[],
+        attachments=[
+            ParsedAttachment(
+                filename="1454020QBP.pdf",
+                content_type="application/pdf",
+                payload=b"%PDF-1.7 duplicate",
+                inline=False,
+            )
+        ],
+    )
+    mark_calls: list[str] = []
+    print_calls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    def _stub_printnode(*_args, **_kwargs):
+        class _P:
+            def submit_pdf(self, pdf_path):
+                print_calls.append(pdf_path.name)
+                return 123
+
+            def get_printjob(self, _job_id):
+                return {"state": "queued"}
+
+        return _P()
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+    monkeypatch.setattr("email_invoice_bot.main.PrintNodeClient", _stub_printnode)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
     assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=0, printed_jobs=0)
     assert print_calls == []
     assert mark_calls == []
     assert not any((tmp_path / "output").rglob("*.pdf"))
-    duplicate_state = (state_dir / "duplicate_history.json").read_text(encoding="utf-8")
-    assert duplicate_state.count('"filename_key"') == 2

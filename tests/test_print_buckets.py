@@ -16,7 +16,7 @@ def test_move_to_print_bucket_moves_file(tmp_path: Path):
     assert moved.read_bytes() == b"abc"
 
 
-def test_move_to_print_bucket_replaces_existing(tmp_path: Path):
+def test_move_to_print_bucket_suffixes_existing(tmp_path: Path):
     src = tmp_path / "invoice.pdf"
     src.write_bytes(b"new")
     existing = tmp_path / "druck_fehler" / "invoice.pdf"
@@ -25,5 +25,6 @@ def test_move_to_print_bucket_replaces_existing(tmp_path: Path):
 
     moved = _move_to_print_bucket(src, "druck_fehler")
 
-    assert moved == existing
+    assert moved == tmp_path / "druck_fehler" / "invoice_2.pdf"
+    assert existing.read_bytes() == b"old"
     assert moved.read_bytes() == b"new"

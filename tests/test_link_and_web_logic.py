@@ -43,3 +43,21 @@ def test_convert_downloaded_image_to_pdf(tmp_path):
     assert pdf_path.suffix.lower() == ".pdf"
     assert not img_path.exists()
 
+
+def test_convert_downloaded_image_to_pdf_suffixes_existing_pdf(tmp_path):
+    PIL = pytest.importorskip("PIL")
+    from PIL import Image
+
+    existing_pdf = tmp_path / "cmr.pdf"
+    existing_pdf.write_bytes(b"old")
+    img_path = tmp_path / "cmr.jpg"
+    image = Image.new("RGB", (20, 20), "white")
+    out = BytesIO()
+    image.save(out, format="JPEG")
+    img_path.write_bytes(out.getvalue())
+
+    pdf_path = WebDownloader._convert_image_file_to_pdf(img_path)
+    assert pdf_path == tmp_path / "cmr_2.pdf"
+    assert pdf_path.exists()
+    assert existing_pdf.read_bytes() == b"old"
+    assert not img_path.exists()

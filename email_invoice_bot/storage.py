@@ -28,6 +28,16 @@ class DailyPdfStorage:
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir
 
+    @staticmethod
+    def unique_path(target: Path) -> Path:
+        if not target.exists():
+            return target
+        for index in range(2, 10000):
+            candidate = target.with_name(f"{target.stem}_{index}{target.suffix}")
+            if not candidate.exists():
+                return candidate
+        raise RuntimeError(f"Could not allocate unique filename for {target}")
+
     def build_filename(self, original_name: str) -> str:
         return self.normalize_pdf_filename(original_name)
 
@@ -38,9 +48,8 @@ class DailyPdfStorage:
         original_name: str,
     ) -> Path:
         day_dir = self.get_day_dir(received_at)
-        target = day_dir / self.build_filename(original_name)
+        target = self.unique_path(day_dir / self.build_filename(original_name))
 
-        # Always replace the existing file for the same filename.
         tmp_path = target.with_suffix(".pdf.tmp")
         tmp_path.write_bytes(pdf_bytes)
         tmp_path.replace(target)

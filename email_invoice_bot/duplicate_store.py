@@ -8,6 +8,19 @@ from pathlib import Path
 
 
 WHITESPACE_RE = re.compile(r"\s+")
+GENERIC_FILENAME_STEMS = {
+    "attachment",
+    "attachments",
+    "cmr",
+    "document",
+    "documents",
+    "faktura",
+    "invoice",
+    "pod",
+    "rechnung",
+    "zalaczniki",
+    "za_czniki",
+}
 
 
 @dataclass(frozen=True)
@@ -31,6 +44,13 @@ class DuplicateStore:
     @staticmethod
     def normalize_filename(value: str) -> str:
         return value.strip().lower()
+
+    @classmethod
+    def is_generic_filename(cls, value: str) -> bool:
+        key = cls.normalize_filename(value)
+        if not key:
+            return False
+        return Path(key).stem in GENERIC_FILENAME_STEMS
 
     def _cutoff(self, now: datetime) -> datetime:
         return now.astimezone(timezone.utc) - timedelta(days=self.lookback_days)
@@ -82,7 +102,7 @@ class DuplicateStore:
     def has_filename(self, filename: str, now: datetime | None = None) -> bool:
         self._prune(now or datetime.now(timezone.utc))
         key = self.normalize_filename(filename)
-        if not key:
+        if not key or self.is_generic_filename(key):
             return False
         return any(record.filename_key == key for record in self._records)
 

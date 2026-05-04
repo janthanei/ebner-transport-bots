@@ -72,9 +72,7 @@ def _move_to_print_bucket(file_path: Path, bucket: str) -> Path:
         base_dir = base_dir.parent
     target_dir = base_dir / bucket
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / file_path.name
-    if target_path.exists():
-        target_path.unlink()
+    target_path = DailyPdfStorage.unique_path(target_dir / file_path.name)
     shutil.move(str(file_path), str(target_path))
     return target_path
 
