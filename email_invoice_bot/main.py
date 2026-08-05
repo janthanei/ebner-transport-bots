@@ -112,9 +112,12 @@ def _record_duplicate_history(
     duplicate_store: DuplicateStore,
     subject: str,
     file_paths: list[Path],
+    source_urls: list[str] | None = None,
 ) -> None:
     for file_path in dict.fromkeys(file_paths):
         duplicate_store.add(subject, file_path.name)
+    for url in dict.fromkeys(source_urls or []):
+        duplicate_store.add_url(subject, url)
     duplicate_store.flush()
 
 
@@ -227,7 +230,25 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             LOGGER.debug("Skipping already processed email uid=%s", email_obj.uid)
             continue
 
-        if duplicate_store.has_subject(email_obj.subject):
+        target_links = filter_target_links(email_obj.links, config.link_substring)
+        has_target_links = bool(target_links)
+        subject_duplicate = duplicate_store.has_subject(email_obj.subject)
+        subject_is_generic = duplicate_store.is_generic_subject(email_obj.subject)
+        if subject_duplicate and subject_is_generic:
+            LOGGER.info(
+                "Ignoring weak duplicate subject uid=%s subject=%s links=%s",
+                email_obj.uid,
+                email_obj.subject,
+                len(target_links),
+            )
+        if subject_duplicate and has_target_links:
+            LOGGER.info(
+                "Ignoring duplicate subject for link-bearing email uid=%s subject=%s links=%s",
+                email_obj.uid,
+                email_obj.subject,
+                len(target_links),
+            )
+        if subject_duplicate and not subject_is_generic and not has_target_links:
             LOGGER.info("Skipping duplicate email subject uid=%s subject=%s", email_obj.uid, email_obj.subject)
             _finalize_processed_email(
                 summary,
@@ -265,8 +286,9 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         summary.saved_attachments += len(saved_paths)
         files_to_print = list(saved_paths)
 
-        target_links = filter_target_links(email_obj.links, config.link_substring)
         reserved_download_names = set(accepted_output_names)
+        reserved_url_keys: set[str] = set()
+        urls_with_downloads: list[str] = []
 
         def _should_download(candidate) -> bool:
             output_name = storage.build_filename(candidate.filename_hint)
@@ -282,6 +304,11 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             return True
 
         for url in target_links:
+            url_key = DuplicateStore.normalize_url(url)
+            if url_key in reserved_url_keys or duplicate_store.has_url(url):
+                LOGGER.info("Skipping duplicate link uid=%s url=%s", email_obj.uid, url)
+                continue
+            reserved_url_keys.add(url_key)
             day_dir = storage.get_day_dir(email_obj.received_at)
             result = web_downloader.scan_and_download(
                 url=url,
@@ -290,6 +317,8 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             )
             summary.downloaded_from_web += len(result.downloaded_paths)
             files_to_print.extend(result.downloaded_paths)
+            if result.downloaded_paths:
+                urls_with_downloads.append(url)
             LOGGER.info(
                 "Link processed uid=%s url=%s scanned=%s cmr_found=%s downloaded=%s",
                 email_obj.uid,
@@ -301,7 +330,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
 
         extracted_files = list(dict.fromkeys(files_to_print))
         if extracted_files:
-            _record_duplicate_history(duplicate_store, email_obj.subject, extracted_files)
+            _record_duplicate_history(duplicate_store, email_obj.subject, extracted_files, urls_with_downloads)
 
         if print_client is not None:
             should_print = True

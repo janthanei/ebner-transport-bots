@@ -52,3 +52,25 @@ def test_duplicate_store_does_not_block_generic_filenames(tmp_path):
     assert not store.has_filename("za_czniki.pdf", now=now)
     assert not store.has_filename("rechnung.pdf", now=now)
     assert store.has_subject("Older invoice", now=now)
+
+
+def test_duplicate_store_detects_generic_subjects():
+    assert DuplicateStore.is_generic_subject("d")
+    assert DuplicateStore.is_generic_subject("WG: d")
+    assert DuplicateStore.is_generic_subject("Rechnung")
+    assert not DuplicateStore.is_generic_subject("Invoice 1454020QBP")
+
+
+def test_duplicate_store_normalizes_url_keys(tmp_path):
+    store = DuplicateStore(tmp_path / "duplicate_history.json", lookback_days=7)
+    now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
+    store.add_url(
+        "Documents",
+        "https://documents.discordia.eu/files/9AE74BE8-5BA7-4F63-AD58-9A697E7A09C3?token=abc#view",
+        processed_at=now,
+    )
+
+    assert store.has_url(
+        "https://documents.discordia.eu/files/9ae74be8-5ba7-4f63-ad58-9a697e7a09c3?token=abc",
+        now=now,
+    )

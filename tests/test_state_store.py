@@ -5,6 +5,7 @@ from email_invoice_bot.email_parser import ParsedAttachment
 from email_invoice_bot.email_parser import ParsedEmail
 from email_invoice_bot.main import ProcessSummary, _finalize_processed_email, process_cycle
 from email_invoice_bot.state_store import StateStore
+from email_invoice_bot.web_downloader import DownloadResult
 
 
 def _email(uid: str, message_id: str, received_at: datetime) -> ParsedEmail:
@@ -247,6 +248,145 @@ def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, mo
     assert summary.saved_attachments == 0
     assert mark_calls == []
     assert not any((tmp_path / "output").rglob("*.pdf"))
+
+
+def test_process_cycle_does_not_skip_generic_duplicate_subject_with_new_link(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{\n'
+        '  "records": [\n'
+        '    {\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
+        '      "subject_key": "d",\n'
+        '      "filename_key": "old-document.pdf"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    email = ParsedEmail(
+        uid="uid-1",
+        message_id="<msg-1@example.com>",
+        subject="d",
+        sender="sender@example.com",
+        received_at=datetime(2026, 4, 20, 9, 0, 0),
+        body_text="hello",
+        links=[
+            "https://download.example.com/files/new-document",
+            "https://download.example.com/files/new-document",
+        ],
+        attachments=[],
+    )
+    mark_calls: list[str] = []
+    scanned_urls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    class StubWebDownloader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def scan_and_download(self, url, output_dir, should_download=None):
+            scanned_urls.append(url)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "new-document.pdf"
+            path.write_bytes(b"%PDF-1.7 link")
+            return DownloadResult(scanned_candidates=1, cmr_found=True, downloaded_paths=[path])
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+    monkeypatch.setattr("email_invoice_bot.main.WebDownloader", StubWebDownloader)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=1, printed_jobs=0)
+    assert scanned_urls == ["https://download.example.com/files/new-document"]
+    assert mark_calls == ["uid-1"]
+    duplicate_state = (state_dir / "duplicate_history.json").read_text(encoding="utf-8")
+    assert '"url_key": "https://download.example.com/files/new-document"' in duplicate_state
+
+
+def test_process_cycle_skips_historical_duplicate_link_without_marking_read(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{\n'
+        '  "records": [\n'
+        '    {\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
+        '      "subject_key": "d",\n'
+        '      "filename_key": "",\n'
+        '      "url_key": "https://download.example.com/files/old-document"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    email = ParsedEmail(
+        uid="uid-1",
+        message_id="<msg-1@example.com>",
+        subject="d",
+        sender="sender@example.com",
+        received_at=datetime(2026, 4, 20, 9, 0, 0),
+        body_text="hello",
+        links=["https://download.example.com/files/old-document"],
+        attachments=[],
+    )
+    mark_calls: list[str] = []
+    scanned_urls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    class StubWebDownloader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def scan_and_download(self, url, output_dir, should_download=None):
+            scanned_urls.append(url)
+            return DownloadResult(scanned_candidates=1, cmr_found=True, downloaded_paths=[])
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+    monkeypatch.setattr("email_invoice_bot.main.WebDownloader", StubWebDownloader)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=0, printed_jobs=0)
+    assert scanned_urls == []
+    assert mark_calls == []
 
 
 def test_process_cycle_skips_duplicate_filename_but_processes_new_attachment(tmp_path, monkeypatch):
