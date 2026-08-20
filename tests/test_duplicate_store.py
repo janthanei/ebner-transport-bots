@@ -44,11 +44,13 @@ def test_duplicate_store_does_not_block_generic_filenames(tmp_path):
     now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
     store.add("Older invoice", "POD.PDF", processed_at=now)
     store.add("Older invoice", "faktura.pdf", processed_at=now)
+    store.add("Older invoice", "inv.pdf", processed_at=now)
     store.add("Older invoice", "za_czniki.pdf", processed_at=now)
     store.add("Older invoice", "Rechnung.pdf", processed_at=now)
 
     assert not store.has_filename("pod.pdf", now=now)
     assert not store.has_filename("Faktura.pdf", now=now)
+    assert not store.has_filename("INV.pdf", now=now)
     assert not store.has_filename("za_czniki.pdf", now=now)
     assert not store.has_filename("rechnung.pdf", now=now)
     assert store.has_subject("Older invoice", now=now)

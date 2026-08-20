@@ -480,6 +480,11 @@ def test_process_cycle_processes_generic_duplicate_filenames_for_new_subject(tmp
         '    {\n'
         '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
         '      "subject_key": "older invoice",\n'
+        '      "filename_key": "inv.pdf"\n'
+        '    },\n'
+        '    {\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
+        '      "subject_key": "older invoice",\n'
         '      "filename_key": "za_czniki.pdf"\n'
         "    }\n"
         "  ]\n"
@@ -503,9 +508,15 @@ def test_process_cycle_processes_generic_duplicate_filenames_for_new_subject(tmp
                 inline=False,
             ),
             ParsedAttachment(
-                filename="załączniki.pdf",
+                filename="inv.pdf",
                 content_type="application/pdf",
                 payload=b"%PDF-1.7 duplicate-b",
+                inline=False,
+            ),
+            ParsedAttachment(
+                filename="załączniki.pdf",
+                content_type="application/pdf",
+                payload=b"%PDF-1.7 duplicate-c",
                 inline=False,
             ),
         ],
@@ -542,12 +553,16 @@ def test_process_cycle_processes_generic_duplicate_filenames_for_new_subject(tmp
 
     summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
 
-    assert summary == ProcessSummary(processed=1, saved_attachments=2, downloaded_from_web=0, printed_jobs=0)
-    assert print_calls == ["faktura.pdf", "za_czniki.pdf"]
+    assert summary == ProcessSummary(processed=1, saved_attachments=3, downloaded_from_web=0, printed_jobs=0)
+    assert print_calls == ["faktura.pdf", "inv.pdf", "za_czniki.pdf"]
     assert mark_calls == ["uid-1"]
-    assert sorted(path.name for path in (tmp_path / "output").rglob("*.pdf")) == ["faktura.pdf", "za_czniki.pdf"]
+    assert sorted(path.name for path in (tmp_path / "output").rglob("*.pdf")) == [
+        "faktura.pdf",
+        "inv.pdf",
+        "za_czniki.pdf",
+    ]
     duplicate_state = (state_dir / "duplicate_history.json").read_text(encoding="utf-8")
-    assert duplicate_state.count('"filename_key"') == 4
+    assert duplicate_state.count('"filename_key"') == 6
 
 
 def test_process_cycle_still_skips_distinctive_duplicate_only_attachments(tmp_path, monkeypatch):

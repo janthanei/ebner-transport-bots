@@ -16,6 +16,7 @@ GENERIC_FILENAME_STEMS = {
     "document",
     "documents",
     "faktura",
+    "inv",
     "invoice",
     "pod",
     "rechnung",
