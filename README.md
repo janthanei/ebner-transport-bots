@@ -147,7 +147,8 @@ Printable duplicate suppression is tracked separately in `state/duplicate_histor
 
 Current duplicate rules:
 
-- if the normalized email subject matches a processed record from the last 7 days, the email is skipped entirely
+- if a specific normalized email subject matches a processed record from the last 7 days, the email is skipped entirely
+- generic subjects such as `REMINDER`, `Invoice`, or `POD` continue to item-level duplicate checks
 - otherwise, individual printable files are skipped when the normalized output filename matches a processed record from the last 7 days
 - duplicate items are skipped before saving, so they do not overwrite existing files
 

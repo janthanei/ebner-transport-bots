@@ -60,6 +60,7 @@ def test_duplicate_store_detects_generic_subjects():
     assert DuplicateStore.is_generic_subject("d")
     assert DuplicateStore.is_generic_subject("WG: d")
     assert DuplicateStore.is_generic_subject("Rechnung")
+    assert DuplicateStore.is_generic_subject("REMINDER")
     assert not DuplicateStore.is_generic_subject("Invoice 1454020QBP")
 
 

@@ -36,6 +36,7 @@ GENERIC_SUBJECTS = {
     "invoice",
     "pod",
     "rechnung",
+    "reminder",
     "scan",
     "scans",
 }

@@ -323,6 +323,68 @@ def test_process_cycle_does_not_skip_generic_duplicate_subject_with_new_link(tmp
     assert '"url_key": "https://download.example.com/files/new-document"' in duplicate_state
 
 
+def test_process_cycle_does_not_skip_reminder_with_new_attachment(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{\n'
+        '  "records": [\n'
+        '    {\n'
+        '      "processed_at_utc": "2099-01-01T08:00:00+00:00",\n'
+        '      "subject_key": "reminder",\n'
+        '      "filename_key": "older-reminder.pdf"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    email = ParsedEmail(
+        uid="uid-1",
+        message_id="<msg-1@example.com>",
+        subject="REMINDER",
+        sender="sender@example.com",
+        received_at=datetime(2026, 4, 20, 9, 0, 0),
+        body_text="hello",
+        links=[],
+        attachments=[
+            ParsedAttachment(
+                filename="20260821120845665.pdf",
+                content_type="application/pdf",
+                payload=b"%PDF-1.7 new reminder",
+                inline=False,
+            )
+        ],
+    )
+    mark_calls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=1, downloaded_from_web=0, printed_jobs=0)
+    assert mark_calls == ["uid-1"]
+    assert [path.name for path in (tmp_path / "output").rglob("*.pdf")] == ["20260821120845665.pdf"]
+
+
 def test_process_cycle_skips_historical_duplicate_link_without_marking_read(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MAIL_PROVIDER", "graph")
