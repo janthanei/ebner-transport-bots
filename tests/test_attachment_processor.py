@@ -7,6 +7,7 @@ PIL = pytest.importorskip("PIL")
 from PIL import Image
 
 from email_invoice_bot.attachment_processor import AttachmentProcessor
+from email_invoice_bot.content_fingerprint import fingerprint_file
 from email_invoice_bot.email_parser import ParsedAttachment, ParsedEmail
 from email_invoice_bot.storage import DailyPdfStorage
 
@@ -42,4 +43,4 @@ def test_image_attachment_converted_to_pdf(tmp_path):
     assert paths[0].suffix.lower() == ".pdf"
     assert paths[0].exists()
     assert paths[0].name == "invoice.pdf"
-
+    assert proc.content_fingerprint(parsed.attachments[0]) == fingerprint_file(paths[0])

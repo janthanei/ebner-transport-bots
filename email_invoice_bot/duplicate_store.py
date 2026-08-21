@@ -49,6 +49,7 @@ class DuplicateRecord:
     subject_key: str
     filename_key: str
     url_key: str = ""
+    content_hash: str = ""
 
 
 class DuplicateStore:
@@ -78,6 +79,10 @@ class DuplicateStore:
         path = parsed.path.rstrip("/").lower()
         query = parsed.query
         return urlunparse((parsed.scheme.lower(), netloc, path, "", query, ""))
+
+    @staticmethod
+    def normalize_content_hash(value: str) -> str:
+        return value.strip().lower()
 
     @classmethod
     def is_generic_subject(cls, value: str) -> bool:
@@ -133,6 +138,7 @@ class DuplicateStore:
                             subject_key=str(item["subject_key"]),
                             filename_key=str(item["filename_key"]),
                             url_key=str(item.get("url_key", "")),
+                            content_hash=str(item.get("content_hash", "")),
                         )
                     )
                 except Exception:
@@ -160,18 +166,27 @@ class DuplicateStore:
             return False
         return any(record.url_key == key for record in self._records)
 
+    def has_content_hash(self, content_hash: str, now: datetime | None = None) -> bool:
+        self._prune(now or datetime.now(timezone.utc))
+        key = self.normalize_content_hash(content_hash)
+        if not key:
+            return False
+        return any(record.content_hash == key for record in self._records)
+
     def add(
         self,
         subject: str,
         filename: str,
         processed_at: datetime | None = None,
         url: str = "",
+        content_hash: str = "",
     ) -> None:
         record = DuplicateRecord(
             processed_at_utc=(processed_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
             subject_key=self.normalize_subject(subject),
             filename_key=self.normalize_filename(filename),
             url_key=self.normalize_url(url),
+            content_hash=self.normalize_content_hash(content_hash),
         )
         self._records.append(record)
         self._dirty = True

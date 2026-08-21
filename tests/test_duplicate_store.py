@@ -31,12 +31,19 @@ def test_duplicate_store_prunes_entries_older_than_lookback(tmp_path):
 
 
 def test_duplicate_store_normalizes_subject_and_filename(tmp_path):
-    store = DuplicateStore(tmp_path / "duplicate_history.json", lookback_days=7)
+    state_path = tmp_path / "duplicate_history.json"
+    store = DuplicateStore(state_path, lookback_days=7)
     now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc)
-    store.add("Invoice   A", "Fresh.PDF", processed_at=now)
+    store.add("Invoice   A", "Fresh.PDF", processed_at=now, content_hash="ABC123")
+    store.flush()
 
     assert store.has_subject(" invoice a ", now=now)
     assert store.has_filename("fresh.pdf", now=now)
+    assert store.has_content_hash("abc123", now=now)
+
+    reloaded = DuplicateStore(state_path, lookback_days=7)
+    reloaded.load(now=now)
+    assert reloaded.has_content_hash("ABC123", now=now)
 
 
 def test_duplicate_store_does_not_block_generic_filenames(tmp_path):

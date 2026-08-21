@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from .attachment_processor import AttachmentProcessor
 from .config import AppConfig
+from .content_fingerprint import fingerprint_file
 from .duplicate_store import DuplicateStore
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
@@ -115,10 +116,65 @@ def _record_duplicate_history(
     source_urls: list[str] | None = None,
 ) -> None:
     for file_path in dict.fromkeys(file_paths):
-        duplicate_store.add(subject, file_path.name)
+        duplicate_store.add(
+            subject,
+            file_path.name,
+            content_hash=fingerprint_file(file_path),
+        )
     for url in dict.fromkeys(source_urls or []):
         duplicate_store.add_url(subject, url)
     duplicate_store.flush()
+
+
+def _attachment_content_hash(
+    attachment_processor: AttachmentProcessor,
+    attachment,
+) -> str:
+    try:
+        return attachment_processor.content_fingerprint(attachment)
+    except Exception as exc:
+        LOGGER.warning(
+            "Content hash shadow fingerprint failed filename=%s error=%s",
+            attachment.filename,
+            exc,
+        )
+        return ""
+
+
+def _log_shadow_subject_skip(
+    duplicate_store: DuplicateStore,
+    attachment_processor: AttachmentProcessor,
+    email_obj: ParsedEmail,
+) -> None:
+    printable = [
+        attachment
+        for attachment in email_obj.attachments
+        if not attachment.inline and attachment_processor.is_printable_filename(attachment.filename)
+    ]
+    fingerprints = [
+        (attachment.filename, _attachment_content_hash(attachment_processor, attachment))
+        for attachment in printable
+    ]
+    matched = sum(
+        1
+        for _filename, content_hash in fingerprints
+        if content_hash and duplicate_store.has_content_hash(content_hash)
+    )
+    if not printable:
+        decision = "no_printable_items"
+    elif matched == len(printable) and all(content_hash for _filename, content_hash in fingerprints):
+        decision = "confirmed_duplicate"
+    else:
+        decision = "potential_false_positive"
+    LOGGER.info(
+        "Content hash shadow subject_skip uid=%s subject=%s decision=%s printable=%s matched=%s filenames=%s",
+        email_obj.uid,
+        email_obj.subject,
+        decision,
+        len(printable),
+        matched,
+        ",".join(filename for filename, _content_hash in fingerprints),
+    )
 
 
 def _reconcile_pending_print_jobs(
@@ -248,7 +304,18 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 email_obj.subject,
                 len(target_links),
             )
-        if subject_duplicate and not subject_is_generic and not has_target_links:
+        should_skip_subject = subject_duplicate and not subject_is_generic and not has_target_links
+        if (
+            config.duplicate_content_hash_shadow
+            and should_skip_subject
+            and graph_client is not None
+            and email_obj.has_attachments
+            and not email_obj.attachments
+        ):
+            email_obj.attachments = graph_client.fetch_message_attachments(email_obj.uid)
+        if config.duplicate_content_hash_shadow and should_skip_subject:
+            _log_shadow_subject_skip(duplicate_store, attachment_processor, email_obj)
+        if should_skip_subject:
             LOGGER.info("Skipping duplicate email subject uid=%s subject=%s", email_obj.uid, email_obj.subject)
             _finalize_processed_email(
                 summary,
@@ -264,6 +331,8 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             email_obj.attachments = graph_client.fetch_message_attachments(email_obj.uid)
 
         accepted_output_names: set[str] = set()
+        accepted_content_hashes: dict[str, str] = {}
+        accepted_content_hash_values: set[str] = set()
         filtered_attachments = []
         for attachment in email_obj.attachments:
             if attachment.inline:
@@ -271,15 +340,49 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             if not attachment_processor.is_printable_filename(attachment.filename):
                 continue
             output_name = attachment_processor.output_filename(attachment.filename)
-            if output_name in accepted_output_names or duplicate_store.has_filename(output_name):
+            content_hash = (
+                _attachment_content_hash(attachment_processor, attachment)
+                if config.duplicate_content_hash_shadow
+                else ""
+            )
+            duplicate_in_email = output_name in accepted_output_names
+            duplicate_in_history = duplicate_store.has_filename(output_name)
+            if duplicate_in_email or duplicate_in_history:
                 LOGGER.info(
                     "Skipping duplicate attachment uid=%s filename=%s output_name=%s",
                     email_obj.uid,
                     attachment.filename,
                     output_name,
                 )
+                if config.duplicate_content_hash_shadow:
+                    if duplicate_in_email:
+                        hash_matched = bool(content_hash) and accepted_content_hashes.get(output_name) == content_hash
+                    else:
+                        hash_matched = bool(content_hash) and duplicate_store.has_content_hash(content_hash)
+                    LOGGER.info(
+                        "Content hash shadow filename_skip uid=%s filename=%s decision=%s",
+                        email_obj.uid,
+                        attachment.filename,
+                        "confirmed_duplicate" if hash_matched else "potential_false_positive",
+                    )
                 continue
+            if (
+                config.duplicate_content_hash_shadow
+                and content_hash
+                and (
+                    content_hash in accepted_content_hash_values
+                    or duplicate_store.has_content_hash(content_hash)
+                )
+            ):
+                LOGGER.info(
+                    "Content hash shadow attachment_accept uid=%s filename=%s decision=would_skip_content_duplicate",
+                    email_obj.uid,
+                    attachment.filename,
+                )
             accepted_output_names.add(output_name)
+            accepted_content_hashes[output_name] = content_hash
+            if content_hash:
+                accepted_content_hash_values.add(content_hash)
             filtered_attachments.append(attachment)
 
         saved_paths = attachment_processor.process(email_obj, attachments=filtered_attachments)
@@ -316,6 +419,15 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 should_download=_should_download,
             )
             summary.downloaded_from_web += len(result.downloaded_paths)
+            if config.duplicate_content_hash_shadow:
+                for downloaded_path in result.downloaded_paths:
+                    content_hash = fingerprint_file(downloaded_path)
+                    if duplicate_store.has_content_hash(content_hash):
+                        LOGGER.info(
+                            "Content hash shadow download_accept uid=%s file=%s decision=would_skip_content_duplicate",
+                            email_obj.uid,
+                            downloaded_path.name,
+                        )
             files_to_print.extend(result.downloaded_paths)
             if result.downloaded_paths:
                 urls_with_downloads.append(url)

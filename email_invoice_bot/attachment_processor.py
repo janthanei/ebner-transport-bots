@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from .content_fingerprint import fingerprint_bytes
 from .email_parser import ParsedAttachment, ParsedEmail
 from .storage import DailyPdfStorage
 
@@ -38,6 +39,20 @@ class AttachmentProcessor:
     def output_filename(self, filename: str) -> str:
         return self.storage.build_filename(filename)
 
+    @classmethod
+    def printable_pdf_bytes(cls, attachment: ParsedAttachment) -> bytes | None:
+        ext = cls._ext(attachment.filename)
+        if ext in PDF_EXTENSIONS:
+            return attachment.payload
+        if ext in IMAGE_EXTENSIONS:
+            return cls._image_to_pdf_bytes(attachment.payload)
+        return None
+
+    @classmethod
+    def content_fingerprint(cls, attachment: ParsedAttachment) -> str:
+        pdf_bytes = cls.printable_pdf_bytes(attachment)
+        return fingerprint_bytes(pdf_bytes) if pdf_bytes is not None else ""
+
     def process(
         self,
         email_obj: ParsedEmail,
@@ -49,18 +64,9 @@ class AttachmentProcessor:
             if attachment.inline:
                 continue
 
-            ext = self._ext(attachment.filename)
             try:
-                if ext in PDF_EXTENSIONS:
-                    saved_paths.append(
-                        self.storage.write_pdf_bytes(
-                            attachment.payload,
-                            email_obj.received_at,
-                            attachment.filename,
-                        )
-                    )
-                elif ext in IMAGE_EXTENSIONS:
-                    pdf_bytes = self._image_to_pdf_bytes(attachment.payload)
+                pdf_bytes = self.printable_pdf_bytes(attachment)
+                if pdf_bytes is not None:
                     saved_paths.append(
                         self.storage.write_pdf_bytes(
                             pdf_bytes,

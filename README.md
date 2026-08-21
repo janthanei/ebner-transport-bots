@@ -32,7 +32,7 @@ Current production usage is `graph`.
 - `tests/`: unit tests
 - `deploy/`: systemd unit/timer files
 - `state/processed_state.json`: dedup state for already processed messages
-- `state/duplicate_history.json`: 7-day duplicate history for subject/filename suppression
+- `state/duplicate_history.json`: 7-day duplicate history for subjects, filenames, URLs, and optional content fingerprints
 - `state/pending_print_jobs.json`: pending PrintNode jobs waiting for reconciliation
 - `output/Rechnungen/YYYY-MM-DD/`: saved and downloaded PDFs
 - `output/Rechnungen/YYYY-MM-DD/druck_ausstehend/`: submitted to printer, not yet confirmed done
@@ -80,6 +80,11 @@ Important variables:
 - `PRINTNODE_API_KEY`
 - `PRINTNODE_PRINTER_ID`
 - `PRINT_NOT_BEFORE_UTC`: optional cutoff for printing only newer messages
+
+### Duplicate Shadow Mode
+
+- `DUPLICATE_CONTENT_HASH_SHADOW`: record and compare SHA-256 document fingerprints without changing print decisions
+- backfill retained successful prints once with `PYTHONPATH=. python -m email_invoice_bot.backfill_content_hashes`
 
 ### Retention
 
@@ -144,6 +149,8 @@ The key is built from:
 - `internetMessageId` / `Message-ID` when available
 
 Printable duplicate suppression is tracked separately in `state/duplicate_history.json`.
+
+When content-hash shadow mode is enabled, the same file also stores optional SHA-256 fingerprints. Shadow results are logged as `confirmed_duplicate`, `potential_false_positive`, or `would_skip_content_duplicate`; these observations do not affect printing.
 
 Current duplicate rules:
 

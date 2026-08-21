@@ -64,7 +64,9 @@ def test_process_cycle_skips_previously_processed_messages(tmp_path, monkeypatch
             self.storage = storage
 
         def process(self, email_obj, attachments=None):
-            return [Path(self.storage.get_day_dir(email_obj.received_at) / f"{email_obj.uid}.pdf")]
+            path = Path(self.storage.get_day_dir(email_obj.received_at) / f"{email_obj.uid}.pdf")
+            path.write_bytes(b"%PDF-1.7 stub")
+            return [path]
 
         @staticmethod
         def is_printable_filename(_filename):
@@ -188,11 +190,13 @@ def test_process_cycle_marks_read_when_new_attachment_is_extracted(tmp_path, mon
     assert mark_calls == ["uid-1"]
 
 
-def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, monkeypatch):
+def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MAIL_PROVIDER", "graph")
     monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
     monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+    monkeypatch.setenv("DUPLICATE_CONTENT_HASH_SHADOW", "true")
 
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -248,6 +252,7 @@ def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, mo
     assert summary.saved_attachments == 0
     assert mark_calls == []
     assert not any((tmp_path / "output").rglob("*.pdf"))
+    assert "decision=potential_false_positive" in caplog.text
 
 
 def test_process_cycle_does_not_skip_generic_duplicate_subject_with_new_link(tmp_path, monkeypatch):
