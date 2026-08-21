@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,13 +13,16 @@ from .duplicate_store import DuplicateStore
 def backfill_successful_prints(output_root: Path, duplicate_store: DuplicateStore) -> tuple[int, int]:
     added = 0
     existing = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=duplicate_store.lookback_days)
     pattern = "Rechnungen/*/druck_erfolg/*.pdf"
     for file_path in sorted(output_root.glob(pattern)):
+        processed_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+        if processed_at < cutoff:
+            continue
         content_hash = fingerprint_file(file_path)
         if duplicate_store.has_content_hash(content_hash):
             existing += 1
             continue
-        processed_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
         duplicate_store.add(
             "",
             file_path.name,
