@@ -1,6 +1,9 @@
 from datetime import datetime
 from pathlib import Path
 
+import pymupdf
+
+from email_invoice_bot.content_fingerprint import fingerprint_pdf_bytes
 from email_invoice_bot.email_parser import ParsedAttachment
 from email_invoice_bot.email_parser import ParsedEmail
 from email_invoice_bot.main import ProcessSummary, _finalize_processed_email, process_cycle
@@ -19,6 +22,14 @@ def _email(uid: str, message_id: str, received_at: datetime) -> ParsedEmail:
         links=[],
         attachments=[],
     )
+
+
+def _pdf_bytes(text: str, created: str = "D:20260818145516") -> bytes:
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 72), text)
+    document.set_metadata({"creationDate": created, "modDate": created})
+    return document.tobytes()
 
 
 def test_process_cycle_skips_previously_processed_messages(tmp_path, monkeypatch):
@@ -255,6 +266,114 @@ def test_process_cycle_skips_duplicate_subject_without_marking_read(tmp_path, mo
     assert "decision=potential_false_positive" in caplog.text
 
 
+def test_active_fingerprint_skips_metadata_only_pdf_duplicate(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+    monkeypatch.setenv("DUPLICATE_CONTENT_HASH_ACTIVE", "true")
+
+    first = _pdf_bytes("Invoice total: 100.00 EUR", "D:20260818145516")
+    forwarded = _pdf_bytes("Invoice total: 100.00 EUR", "D:20260818162029")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{"records": [{'
+        '"processed_at_utc": "2099-01-01T08:00:00+00:00", '
+        '"subject_key": "invoice batch", '
+        '"filename_key": "invoice.pdf", '
+        f'"content_hash": "{fingerprint_pdf_bytes(first)}"'
+        '}]}',
+        encoding="utf-8",
+    )
+    email = ParsedEmail(
+        uid="uid-duplicate",
+        message_id="<duplicate@example.com>",
+        subject="Invoice batch",
+        sender="sender@example.com",
+        received_at=datetime(2026, 8, 18, 16, 20, 29),
+        body_text="hello",
+        links=[],
+        attachments=[ParsedAttachment("invoice.pdf", "application/pdf", forwarded, False)],
+    )
+    mark_calls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=0, printed_jobs=0)
+    assert mark_calls == []
+    assert not any((tmp_path / "output").rglob("*.pdf"))
+
+
+def test_active_fingerprint_accepts_changed_pdf_with_same_subject_and_filename(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+    monkeypatch.setenv("DUPLICATE_CONTENT_HASH_ACTIVE", "true")
+
+    first = _pdf_bytes("Invoice total: 100.00 EUR")
+    corrected = _pdf_bytes("Invoice total: 110.00 EUR")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{"records": [{'
+        '"processed_at_utc": "2099-01-01T08:00:00+00:00", '
+        '"subject_key": "invoice batch", '
+        '"filename_key": "invoice.pdf", '
+        f'"content_hash": "{fingerprint_pdf_bytes(first)}"'
+        '}]}',
+        encoding="utf-8",
+    )
+    email = ParsedEmail(
+        uid="uid-corrected",
+        message_id="<corrected@example.com>",
+        subject="Invoice batch",
+        sender="sender@example.com",
+        received_at=datetime(2026, 8, 18, 16, 25, 0),
+        body_text="hello",
+        links=[],
+        attachments=[ParsedAttachment("invoice.pdf", "application/pdf", corrected, False)],
+    )
+    mark_calls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=1, downloaded_from_web=0, printed_jobs=0)
+    assert mark_calls == ["uid-corrected"]
+    assert [path.name for path in (tmp_path / "output").rglob("*.pdf")] == ["invoice.pdf"]
+
+
 def test_process_cycle_does_not_skip_generic_duplicate_subject_with_new_link(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("MAIL_PROVIDER", "graph")
@@ -454,6 +573,70 @@ def test_process_cycle_skips_historical_duplicate_link_without_marking_read(tmp_
     assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=0, printed_jobs=0)
     assert scanned_urls == []
     assert mark_calls == []
+
+
+def test_active_fingerprint_removes_duplicate_download_without_marking_read(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_PROVIDER", "graph")
+    monkeypatch.setenv("LINK_SUBSTRING", "download.example.com")
+    monkeypatch.setenv("OUTPUT_ROOT", str(tmp_path / "output"))
+    monkeypatch.setenv("DUPLICATE_CONTENT_HASH_ACTIVE", "true")
+
+    pdf_bytes = _pdf_bytes("Downloaded invoice")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "duplicate_history.json").write_text(
+        '{"records": [{'
+        '"processed_at_utc": "2099-01-01T08:00:00+00:00", '
+        '"subject_key": "older download", '
+        '"filename_key": "download.pdf", '
+        f'"content_hash": "{fingerprint_pdf_bytes(pdf_bytes)}"'
+        '}]}',
+        encoding="utf-8",
+    )
+    email = ParsedEmail(
+        uid="uid-download",
+        message_id="<download@example.com>",
+        subject="New download",
+        sender="sender@example.com",
+        received_at=datetime(2026, 8, 18, 17, 0, 0),
+        body_text="hello",
+        links=["https://download.example.com/files/new-url"],
+        attachments=[],
+    )
+    mark_calls: list[str] = []
+
+    def _stub_graph(**_kwargs):
+        class _G:
+            def fetch_recent_messages(self, _max_count, _lookback_hours):
+                return [email]
+
+            def fetch_message_attachments(self, _message_id):
+                return []
+
+            def mark_message_read(self, message_id):
+                mark_calls.append(message_id)
+
+        return _G()
+
+    class StubWebDownloader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def scan_and_download(self, url, output_dir, should_download=None):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path = output_dir / "download.pdf"
+            path.write_bytes(pdf_bytes)
+            return DownloadResult(scanned_candidates=1, cmr_found=True, downloaded_paths=[path])
+
+    monkeypatch.setattr("email_invoice_bot.graph_client.GraphClient", _stub_graph)
+    monkeypatch.setattr("email_invoice_bot.main.WebDownloader", StubWebDownloader)
+
+    summary = process_cycle(__import__("email_invoice_bot.config", fromlist=["AppConfig"]).AppConfig.from_env())
+
+    assert summary == ProcessSummary(processed=1, saved_attachments=0, downloaded_from_web=0, printed_jobs=0)
+    assert mark_calls == []
+    assert not any((tmp_path / "output").rglob("*.pdf"))
 
 
 def test_process_cycle_skips_duplicate_filename_but_processes_new_attachment(tmp_path, monkeypatch):

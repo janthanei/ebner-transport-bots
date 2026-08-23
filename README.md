@@ -12,7 +12,7 @@ The production deployment currently runs on Outlook / Microsoft Graph and watche
 4. Convert image attachments (`jpg`, `jpeg`, `png`) to PDF before saving.
 5. Scan matching links from the mail body.
 6. Open matching links with Playwright and download linked PDFs when the CMR rule matches.
-7. Skip saving duplicate items when either the normalized subject or normalized filename was already processed in the last 7 days.
+7. Skip saving duplicate items when their stable rendered content was already processed in the last 7 days; use subject and filename as fallbacks.
 8. Optionally submit resulting PDFs to PrintNode.
 9. Track pending print jobs until they move to success or error buckets.
 10. Mark the message as read in Graph only when the bot actually extracted at least one printable file from that email.
@@ -83,7 +83,8 @@ Important variables:
 
 ### Duplicate Shadow Mode
 
-- `DUPLICATE_CONTENT_HASH_SHADOW`: record and compare SHA-256 document fingerprints without changing print decisions
+- `DUPLICATE_CONTENT_HASH_SHADOW`: compare stable rendered-content fingerprints in logs without changing print decisions
+- `DUPLICATE_CONTENT_HASH_ACTIVE`: use stable rendered-content fingerprints for duplicate decisions
 - backfill retained successful prints once with `PYTHONPATH=. python -m email_invoice_bot.backfill_content_hashes`
 
 ### Retention
@@ -150,11 +151,14 @@ The key is built from:
 
 Printable duplicate suppression is tracked separately in `state/duplicate_history.json`.
 
-When content-hash shadow mode is enabled, the same file also stores optional SHA-256 fingerprints. Shadow results are logged as `confirmed_duplicate`, `potential_false_positive`, or `would_skip_content_duplicate`; these observations do not affect printing.
+When content-fingerprint shadow mode is enabled, the same file also stores optional rendered-content fingerprints. Rendering removes volatile PDF metadata from the comparison, while still detecting visible document changes. Shadow results are logged as `confirmed_duplicate`, `potential_false_positive`, or `would_skip_content_duplicate`; these observations do not affect printing.
 
 Current duplicate rules:
 
-- if a specific normalized email subject matches a processed record from the last 7 days, the email is skipped entirely
+- when content fingerprints are active, exact rendered-content matches are skipped even if the subject or filename changed
+- changed documents are accepted even when a specific subject or filename repeats
+- if fingerprinting fails, matching subjects and filenames remain conservative duplicate fallbacks
+- when content fingerprints are inactive, a specific normalized subject match still skips the email entirely
 - generic subjects such as `REMINDER`, `Invoice`, or `POD` continue to item-level duplicate checks
 - otherwise, individual printable files are skipped when the normalized output filename matches a processed record from the last 7 days
 - duplicate items are skipped before saving, so they do not overwrite existing files

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .content_fingerprint import fingerprint_bytes
+from .content_fingerprint import fingerprint_pdf_bytes
 from .email_parser import ParsedAttachment, ParsedEmail
 from .storage import DailyPdfStorage
 
@@ -51,7 +51,7 @@ class AttachmentProcessor:
     @classmethod
     def content_fingerprint(cls, attachment: ParsedAttachment) -> str:
         pdf_bytes = cls.printable_pdf_bytes(attachment)
-        return fingerprint_bytes(pdf_bytes) if pdf_bytes is not None else ""
+        return fingerprint_pdf_bytes(pdf_bytes) if pdf_bytes is not None else ""
 
     def process(
         self,
