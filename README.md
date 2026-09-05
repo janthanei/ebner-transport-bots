@@ -26,6 +26,10 @@ The production deployment currently runs on Outlook / Microsoft Graph and watche
 
 Current production usage is `graph`.
 
+Graph enumeration follows all mailbox and attachment pages. Attachment fetch or
+conversion failures remain failures rather than finalizing an empty result, so
+the message can be retried. `MAX_EMAILS_PER_CYCLE` sets the Graph page size.
+
 ## Directory Layout
 
 - `email_invoice_bot/`: main application code

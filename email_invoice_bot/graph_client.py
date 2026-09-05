@@ -6,7 +6,7 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .email_parser import ParsedAttachment, ParsedEmail
@@ -53,7 +53,7 @@ class GraphClient:
         return self._token
 
     def _api_get(self, path: str) -> Any:
-        url = f"{GRAPH_BASE}{path}"
+        url = self._graph_url(path)
         req = Request(url, headers={"Authorization": f"Bearer {self._get_token()}"})
         started = time.monotonic()
         LOGGER.info("Graph GET start path=%s", path)
@@ -66,6 +66,30 @@ class GraphClient:
             LOGGER.warning("Graph GET failed path=%s duration_s=%.2f error=%s", path, time.monotonic() - started, exc)
             self._token = None
             raise
+
+    @staticmethod
+    def _graph_url(path: str) -> str:
+        url = f"{GRAPH_BASE}{path}" if path.startswith("/") else path
+        parsed = urlparse(url)
+        if (parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com"
+                or not parsed.path.startswith("/v1.0/")):
+            raise ValueError("Refusing untrusted Graph pagination URL")
+        return url
+
+    def _collection(self, path: str) -> list[dict]:
+        items = []
+        seen = set()
+        while path:
+            url = self._graph_url(path)
+            if url in seen:
+                raise RuntimeError("Graph returned a repeated pagination URL")
+            seen.add(url)
+            data = self._api_get(path)
+            if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+                raise ValueError("Invalid Graph collection response")
+            items.extend(data["value"])
+            path = data.get("@odata.nextLink", "")
+        return items
 
     def _api_patch(self, path: str, body: dict[str, Any]) -> None:
         url = f"{GRAPH_BASE}{path}"
@@ -121,14 +145,14 @@ class GraphClient:
         mid = quote(message_id, safe="")
         started = time.monotonic()
         LOGGER.info("Graph attachment fetch start mailbox=%s message_id=%s", self.mailbox, message_id)
-        data = self._api_get(f"/users/{user}/messages/{mid}/attachments")
+        rows = self._collection(f"/users/{user}/messages/{mid}/attachments")
         attachments: list[ParsedAttachment] = []
-        for att in data.get("value", []):
+        for att in rows:
             if att.get("@odata.type", "") != "#microsoft.graph.fileAttachment":
                 continue
             name = att.get("name", "")
             content_type = att.get("contentType", "application/octet-stream").lower()
-            content_bytes = base64.b64decode(att.get("contentBytes", ""))
+            content_bytes = base64.b64decode(att.get("contentBytes", ""), validate=True)
             inline = att.get("isInline", False)
             if name and content_bytes:
                 attachments.append(ParsedAttachment(
@@ -145,7 +169,7 @@ class GraphClient:
             return self._fetch_attachments(message_id)
         except Exception as exc:
             LOGGER.exception("Failed fetching attachments msg=%s error=%s", message_id, exc)
-            return []
+            raise
 
     def fetch_recent_messages(self, max_count: int, lookback_hours: int) -> list[ParsedEmail]:
         user = quote(self.mailbox)
@@ -160,8 +184,7 @@ class GraphClient:
         })
         path = f"/users/{user}/mailFolders/inbox/messages?{qs}"
         LOGGER.info("Graph inbox fetch start mailbox=%s lookback_hours=%s max_count=%s", self.mailbox, lookback_hours, max_count)
-        data = self._api_get(path)
-        raw_messages = data.get("value", [])
+        raw_messages = self._collection(path)
         LOGGER.info("Graph inbox fetch done mailbox=%s message_count=%s", self.mailbox, len(raw_messages))
         results: list[ParsedEmail] = []
 

@@ -59,6 +59,7 @@ class AttachmentProcessor:
         attachments: list[ParsedAttachment] | None = None,
     ) -> list[Path]:
         saved_paths: list[Path] = []
+        failed = []
         candidates = email_obj.attachments if attachments is None else attachments
         for attachment in candidates:
             if attachment.inline:
@@ -75,9 +76,12 @@ class AttachmentProcessor:
                         )
                     )
             except Exception as exc:
+                failed.append(attachment.filename)
                 LOGGER.exception(
                     "Attachment processing failed filename=%s error=%s",
                     attachment.filename,
                     exc,
                 )
+        if failed:
+            raise RuntimeError(f"Attachment extraction incomplete: {', '.join(failed)}")
         return saved_paths
