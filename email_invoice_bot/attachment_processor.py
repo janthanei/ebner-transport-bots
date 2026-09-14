@@ -83,5 +83,7 @@ class AttachmentProcessor:
                     exc,
                 )
         if failed:
+            for path in saved_paths:
+                path.unlink(missing_ok=True)
             raise RuntimeError(f"Attachment extraction incomplete: {', '.join(failed)}")
         return saved_paths

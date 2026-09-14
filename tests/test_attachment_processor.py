@@ -44,3 +44,25 @@ def test_image_attachment_converted_to_pdf(tmp_path):
     assert paths[0].exists()
     assert paths[0].name == "invoice.pdf"
     assert proc.content_fingerprint(parsed.attachments[0]) == fingerprint_file(paths[0])
+
+
+def test_partial_output_is_removed_when_an_attachment_fails(tmp_path):
+    parsed = ParsedEmail(
+        uid="1",
+        message_id="<a@b>",
+        subject="Invoice",
+        sender="sender@example.com",
+        received_at=datetime(2026, 3, 3, 8, 0, 0),
+        body_text="hello",
+        links=[],
+        attachments=[
+            ParsedAttachment("valid.pdf", "application/pdf", b"pdf", False),
+            ParsedAttachment("broken.png", "image/png", b"not-an-image", False),
+        ],
+    )
+    proc = AttachmentProcessor(DailyPdfStorage(tmp_path))
+
+    with pytest.raises(RuntimeError, match="broken.png"):
+        proc.process(parsed)
+
+    assert list(tmp_path.rglob("*.pdf")) == []
