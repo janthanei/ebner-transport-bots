@@ -42,6 +42,8 @@ def _service() -> PrintNotificationService:
         from_name="Print Service",
         recipients=["christian@example.com"],
         cc=["jan@example.com"],
+        weekly_recipients=["jan@example.com"],
+        weekly_cc=[],
         error_share_path=r"\\server\Rechnungen\druck_fehler",
         report_timezone="Europe/Berlin",
         weekly_weekday=0,
@@ -92,4 +94,7 @@ def test_weekly_report_is_idempotent(tmp_path: Path):
     assert not service.maybe_send_weekly_report(ledger, now_utc=now)
 
     assert len(StubSmtp.messages) == 1
-    assert "Dokumente gesamt: 1" in StubSmtp.messages[0].get_content()
+    message = StubSmtp.messages[0]
+    assert message["To"] == "jan@example.com"
+    assert message["Cc"] is None
+    assert "Dokumente gesamt: 1" in message.get_content()

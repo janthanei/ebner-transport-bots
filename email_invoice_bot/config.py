@@ -81,6 +81,8 @@ class AppConfig:
     print_alert_cc: list[str]
     print_error_share_path: str
     print_weekly_report_enabled: bool
+    print_weekly_report_to: list[str]
+    print_weekly_report_cc: list[str]
     print_weekly_report_weekday: int
     print_weekly_report_hour: int
     print_report_timezone: str
@@ -93,6 +95,18 @@ class AppConfig:
     def from_env(cls) -> "AppConfig":
         output_root = Path(os.getenv("OUTPUT_ROOT", "output")).expanduser().resolve()
         provider = os.getenv("MAIL_PROVIDER", "imap").strip().lower()
+        print_alert_to = _get_list("PRINT_ALERT_TO")
+        print_alert_cc = _get_list("PRINT_ALERT_CC")
+        print_weekly_report_to = (
+            _get_list("PRINT_WEEKLY_REPORT_TO")
+            if "PRINT_WEEKLY_REPORT_TO" in os.environ
+            else print_alert_to
+        )
+        print_weekly_report_cc = (
+            _get_list("PRINT_WEEKLY_REPORT_CC")
+            if "PRINT_WEEKLY_REPORT_CC" in os.environ
+            else print_alert_cc
+        )
         return cls(
             mail_provider=provider,
             graph_tenant_id=os.getenv("GRAPH_TENANT_ID", ""),
@@ -128,8 +142,8 @@ class AppConfig:
             smtp_starttls=_get_bool("SMTP_STARTTLS", default=True),
             smtp_from_email=os.getenv("SMTP_FROM_EMAIL", "").strip(),
             smtp_from_name=os.getenv("SMTP_FROM_NAME", "Ebner Druckservice").strip(),
-            print_alert_to=_get_list("PRINT_ALERT_TO"),
-            print_alert_cc=_get_list("PRINT_ALERT_CC"),
+            print_alert_to=print_alert_to,
+            print_alert_cc=print_alert_cc,
             print_error_share_path=os.getenv(
                 "PRINT_ERROR_SHARE_PATH",
                 r"\\45.154.207.113\EbnerTransport\Rechnungen\druck_fehler",
@@ -138,6 +152,8 @@ class AppConfig:
                 "PRINT_WEEKLY_REPORT_ENABLED",
                 default=True,
             ),
+            print_weekly_report_to=print_weekly_report_to,
+            print_weekly_report_cc=print_weekly_report_cc,
             print_weekly_report_weekday=_get_int("PRINT_WEEKLY_REPORT_WEEKDAY", 0),
             print_weekly_report_hour=_get_int("PRINT_WEEKLY_REPORT_HOUR", 8),
             print_report_timezone=os.getenv(

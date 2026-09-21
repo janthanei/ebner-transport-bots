@@ -108,6 +108,7 @@ Important variables:
 - `PRINT_ALERT_TO`, `PRINT_ALERT_CC`: comma-separated recipients
 - `PRINT_ERROR_SHARE_PATH`: copyable SMB path included in failure emails
 - `PRINT_WEEKLY_REPORT_ENABLED`: send the previous week's durable print statistics
+- `PRINT_WEEKLY_REPORT_TO`, `PRINT_WEEKLY_REPORT_CC`: optional report-specific recipients; defaults to the alert recipients when unset
 - `PRINT_WEEKLY_REPORT_WEEKDAY`: Monday is `0`; defaults to `0`
 - `PRINT_WEEKLY_REPORT_HOUR`: local report hour; defaults to `8`
 - `PRINT_REPORT_TIMEZONE`: defaults to `Europe/Berlin`

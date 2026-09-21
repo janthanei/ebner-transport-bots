@@ -27,6 +27,8 @@ class PrintNotificationService:
         from_name: str,
         recipients: list[str],
         cc: list[str],
+        weekly_recipients: list[str] | None,
+        weekly_cc: list[str] | None,
         error_share_path: str,
         report_timezone: str,
         weekly_weekday: int,
@@ -46,19 +48,30 @@ class PrintNotificationService:
         self.from_name = from_name
         self.recipients = recipients
         self.cc = cc
+        self.weekly_recipients = weekly_recipients or recipients
+        self.weekly_cc = weekly_cc if weekly_cc is not None else cc
         self.error_share_path = error_share_path
         self.report_timezone = ZoneInfo(report_timezone)
         self.weekly_weekday = weekly_weekday
         self.weekly_hour = weekly_hour
         self.smtp_factory = smtp_factory
 
-    def _send(self, subject: str, body: str) -> None:
+    def _send(
+        self,
+        subject: str,
+        body: str,
+        *,
+        recipients: list[str] | None = None,
+        cc: list[str] | None = None,
+    ) -> None:
+        message_recipients = recipients or self.recipients
+        message_cc = self.cc if cc is None else cc
         message = EmailMessage()
         message["Subject"] = subject
         message["From"] = formataddr((self.from_name, self.from_email))
-        message["To"] = ", ".join(self.recipients)
-        if self.cc:
-            message["Cc"] = ", ".join(self.cc)
+        message["To"] = ", ".join(message_recipients)
+        if message_cc:
+            message["Cc"] = ", ".join(message_cc)
         message.set_content(body)
 
         with self.smtp_factory(self.smtp_host, self.smtp_port, timeout=30) as smtp:
@@ -142,7 +155,7 @@ class PrintNotificationService:
         ] or ["- Keine"]
         body = "\n".join(
             [
-                "Hallo Christian,",
+                "Hallo Jan,",
                 "",
                 f"Druckübersicht {period_start_local.date()} bis {period_end_local.date()}:",
                 f"- Dokumente gesamt: {summary['total']}",
@@ -160,6 +173,8 @@ class PrintNotificationService:
         self._send(
             f"Wöchentliche Druckübersicht {period_start_local.date()} bis {period_end_local.date()}",
             body,
+            recipients=self.weekly_recipients,
+            cc=self.weekly_cc,
         )
         ledger.record_report_run(report_key)
         LOGGER.info("Weekly print report sent report_key=%s", report_key)

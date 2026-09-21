@@ -763,6 +763,8 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             from_name=config.smtp_from_name,
             recipients=config.print_alert_to,
             cc=config.print_alert_cc,
+            weekly_recipients=config.print_weekly_report_to,
+            weekly_cc=config.print_weekly_report_cc,
             error_share_path=config.print_error_share_path,
             report_timezone=config.print_report_timezone,
             weekly_weekday=config.print_weekly_report_weekday,
