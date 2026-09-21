@@ -38,6 +38,7 @@ the message can be retried. `MAX_EMAILS_PER_CYCLE` sets the Graph page size.
 - `state/processed_state.json`: dedup state for already processed messages
 - `state/duplicate_history.json`: 7-day duplicate history for subjects, filenames, URLs, and optional content fingerprints
 - `state/pending_print_jobs.json`: pending PrintNode jobs waiting for reconciliation
+- `state/print_history.sqlite3`: durable history of submitted, successful, retried, and failed print jobs
 - `output/Rechnungen/YYYY-MM-DD/`: saved and downloaded PDFs
 - `output/Rechnungen/YYYY-MM-DD/druck_ausstehend/`: submitted to printer, not yet confirmed done
 - `output/Rechnungen/YYYY-MM-DD/druck_erfolg/`: PrintNode reported `done`
@@ -192,6 +193,7 @@ If printing is enabled:
 4. On later reconciliation:
    - `done` -> move file to `druck_erfolg`
    - `error` -> move file to the permanent global `druck_fehler/YYYY-MM-DD` archive
+5. Every submission and terminal state is retained in `state/print_history.sqlite3` for lifetime statistics and reporting.
 
 ## Important Operational Notes
 
@@ -283,6 +285,7 @@ Typical causes observed so far:
 - `email_invoice_bot/duplicate_store.py`: 7-day duplicate subject/filename history
 - `email_invoice_bot/storage.py`: dated output layout
 - `email_invoice_bot/print_job_store.py`: pending print job persistence
+- `email_invoice_bot/print_ledger.py`: durable terminal print history and reporting data
 - `email_invoice_bot/state_store.py`: processed message persistence
 
 ## Caution

@@ -11,6 +11,10 @@ class PendingPrintJob:
     file_path: str
     base_dir: str
     created_utc: str
+    email_uid: str = ""
+    email_subject: str = ""
+    retry_count: int = 0
+    original_job_id: int | None = None
 
 
 class PrintJobStore:
@@ -34,6 +38,14 @@ class PrintJobStore:
                     file_path=str(item["file_path"]),
                     base_dir=str(item["base_dir"]),
                     created_utc=str(item["created_utc"]),
+                    email_uid=str(item.get("email_uid", "")),
+                    email_subject=str(item.get("email_subject", "")),
+                    retry_count=int(item.get("retry_count", 0)),
+                    original_job_id=(
+                        int(item["original_job_id"])
+                        if item.get("original_job_id") is not None
+                        else None
+                    ),
                 )
             except Exception:
                 continue

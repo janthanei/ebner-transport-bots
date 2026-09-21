@@ -19,6 +19,7 @@ from .duplicate_store import DuplicateStore
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
 from .print_job_store import PendingPrintJob, PrintJobStore
+from .print_ledger import PrintLedger
 from .printnode_client import PrintNodeClient
 from .retention import purge_old_output
 from .state_store import StateStore
@@ -196,6 +197,7 @@ def _reconcile_pending_print_jobs(
     print_client: PrintNodeClient,
     job_store: PrintJobStore,
     summary: ProcessSummary,
+    ledger: PrintLedger | None = None,
 ) -> None:
     for job in job_store.items():
         job_id = job.job_id
@@ -218,6 +220,8 @@ def _reconcile_pending_print_jobs(
 
         if state == "done":
             moved = _move_to_print_bucket(file_path, "druck_erfolg")
+            if ledger is not None:
+                ledger.update_status(job_id, "done", file_path=moved)
             summary.printed_jobs += 1
             LOGGER.info("Print done job_id=%s moved_to=%s", job_id, moved)
             job_store.remove(job_id)
@@ -226,6 +230,8 @@ def _reconcile_pending_print_jobs(
 
         if state == "error":
             moved = _move_to_print_bucket(file_path, "druck_fehler")
+            if ledger is not None:
+                ledger.update_status(job_id, "error", file_path=moved)
             LOGGER.warning("Print error job_id=%s moved_to=%s", job_id, moved)
             job_store.remove(job_id)
             job_store.flush()
@@ -284,6 +290,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
     )
     print_client = None
     job_store = None
+    print_ledger = None
     if config.print_enabled:
         if not config.printnode_api_key:
             raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_API_KEY is missing")
@@ -295,7 +302,19 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         )
         job_store = PrintJobStore(Path("state/pending_print_jobs.json"))
         job_store.load()
-        _reconcile_pending_print_jobs(print_client, job_store, summary)
+        print_ledger = PrintLedger(Path("state/print_history.sqlite3"))
+        for pending_job in job_store.items():
+            print_ledger.record_submission(
+                job_id=pending_job.job_id,
+                file_path=Path(pending_job.file_path),
+                printer_id=config.printnode_printer_id,
+                email_uid=pending_job.email_uid,
+                email_subject=pending_job.email_subject,
+                retry_count=pending_job.retry_count,
+                original_job_id=pending_job.original_job_id,
+                submitted_utc=pending_job.created_utc,
+            )
+        _reconcile_pending_print_jobs(print_client, job_store, summary, print_ledger)
     print_not_before = _parse_not_before_utc(config.print_not_before_utc)
 
     for email_obj in emails:
@@ -554,9 +573,21 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                                 file_path=str(moved),
                                 base_dir=str(moved.parent.parent),
                                 created_utc=datetime.now(timezone.utc).isoformat(),
+                                email_uid=email_obj.uid,
+                                email_subject=email_obj.subject,
+                                original_job_id=int(job_id),
                             )
                         )
                         job_store.flush()
+                    if print_ledger is not None:
+                        print_ledger.record_submission(
+                            job_id=int(job_id),
+                            file_path=moved,
+                            printer_id=config.printnode_printer_id,
+                            email_uid=email_obj.uid,
+                            email_subject=email_obj.subject,
+                            original_job_id=int(job_id),
+                        )
                     LOGGER.info(
                         "Print submitted uid=%s file=%s job_id=%s moved_to=%s",
                         email_obj.uid,
@@ -567,6 +598,14 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 except Exception as exc:
                     try:
                         moved = _move_to_print_bucket(file_path, "druck_fehler")
+                        if print_ledger is not None:
+                            print_ledger.record_submission_failure(
+                                file_path=moved,
+                                printer_id=config.printnode_printer_id,
+                                error_message=str(exc),
+                                email_uid=email_obj.uid,
+                                email_subject=email_obj.subject,
+                            )
                         LOGGER.exception(
                             "Print submission failed uid=%s file=%s moved_to=%s error=%s",
                             email_obj.uid,
@@ -593,7 +632,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         )
 
     if print_client is not None and job_store is not None:
-        _reconcile_pending_print_jobs(print_client, job_store, summary)
+        _reconcile_pending_print_jobs(print_client, job_store, summary, print_ledger)
         job_store.flush()
 
     duplicate_store.flush()
