@@ -213,6 +213,14 @@ If printing is enabled:
 5. Every submission and terminal state is retained in `state/print_history.sqlite3` for lifetime statistics and reporting.
 6. A classified PDF-renderer or transient failure is retried once. Renderer failures are normalized with Ghostscript or the bundled PyMuPDF raster fallback first; ambiguous failures are not retried automatically because their physical print state is uncertain.
 
+Seed the durable ledger once with the history still available from PrintNode:
+
+```bash
+PYTHONPATH=. python3 -m email_invoice_bot.backfill_print_history
+```
+
+The import is idempotent. Historical errors are recorded as already notified so enabling SMTP does not send stale alerts.
+
 ## Important Operational Notes
 
 ### Inbox Scope

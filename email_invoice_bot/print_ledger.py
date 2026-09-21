@@ -278,3 +278,34 @@ class PrintLedger:
                 "INSERT OR IGNORE INTO report_runs(report_key, sent_utc) VALUES (?, ?)",
                 (report_key, _utc_now()),
             )
+
+    def import_printnode_history(self, jobs: list[dict]) -> int:
+        imported = 0
+        with self._connect() as connection:
+            for job in jobs:
+                job_id = job.get("id")
+                submitted_utc = str(job.get("createTimestamp") or "")
+                if not isinstance(job_id, int) or not submitted_utc:
+                    continue
+                printer = job.get("printer") if isinstance(job.get("printer"), dict) else {}
+                status = str(job.get("state") or "unknown").lower()
+                cursor = connection.execute(
+                    """
+                    INSERT OR IGNORE INTO print_jobs (
+                        printnode_job_id, original_job_id, file_name, file_path,
+                        printer_id, status, submitted_utc, updated_utc, notified_utc
+                    ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        job_id,
+                        str(job.get("title") or f"printjob-{job_id}"),
+                        int(printer.get("id") or 0),
+                        status,
+                        submitted_utc,
+                        submitted_utc,
+                        submitted_utc if status == "error" else None,
+                    ),
+                )
+                imported += cursor.rowcount
+        return imported

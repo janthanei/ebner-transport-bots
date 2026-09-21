@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -93,3 +94,36 @@ class PrintNodeClient:
         if not isinstance(data, list):
             raise RuntimeError(f"PrintNode returned invalid states job_id={job_id}")
         return [item for item in data if isinstance(item, dict)]
+
+    def list_printjobs(self) -> list[dict[str, Any]]:
+        jobs: list[dict[str, Any]] = []
+        after: int | None = None
+        while True:
+            query = {"dir": "asc", "limit": 100}
+            if after is not None:
+                query["after"] = after
+            auth = base64.b64encode(f"{self.api_key}:".encode("utf-8")).decode("ascii")
+            req = Request(
+                f"https://api.printnode.com/printjobs?{urlencode(query)}",
+                headers={"Authorization": f"Basic {auth}"},
+            )
+            try:
+                with urlopen(req, timeout=30) as response:
+                    body = response.read().decode("utf-8", errors="replace").strip()
+                    page = json.loads(body) if body else []
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"PrintNode list_printjobs failed status={exc.code} body={detail}"
+                ) from exc
+
+            if not isinstance(page, list):
+                raise RuntimeError("PrintNode list_printjobs returned invalid payload")
+            valid_page = [item for item in page if isinstance(item, dict)]
+            jobs.extend(valid_page)
+            if len(page) < 100:
+                break
+            if not valid_page or not isinstance(valid_page[-1].get("id"), int):
+                raise RuntimeError("PrintNode list_printjobs cannot continue pagination")
+            after = int(valid_page[-1]["id"])
+        return jobs

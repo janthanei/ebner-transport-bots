@@ -49,3 +49,29 @@ def test_print_ledger_tracks_unresolved_submission_failure(tmp_path: Path):
     assert errors[0]["file_name"] == "broken.pdf"
     assert errors[0]["status"] == "error"
     assert errors[0]["error_message"] == "SMTP is unrelated"
+
+
+def test_import_printnode_history_is_idempotent_and_suppresses_old_errors(tmp_path: Path):
+    ledger = PrintLedger(tmp_path / "print_history.sqlite3")
+    jobs = [
+        {
+            "id": 100,
+            "title": "invoice.pdf",
+            "state": "done",
+            "createTimestamp": "2026-09-20T10:00:00Z",
+            "printer": {"id": 456},
+        },
+        {
+            "id": 101,
+            "title": "broken.pdf",
+            "state": "error",
+            "createTimestamp": "2026-09-20T11:00:00Z",
+            "printer": {"id": 456},
+        },
+    ]
+
+    assert ledger.import_printnode_history(jobs) == 2
+    assert ledger.import_printnode_history(jobs) == 0
+    assert ledger.get_job(100)["status"] == "done"
+    assert ledger.get_job(101)["notified_utc"] == "2026-09-20T11:00:00Z"
+    assert ledger.unnotified_errors() == []
