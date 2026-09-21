@@ -52,6 +52,14 @@ class PrintLedger:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_print_jobs_submitted ON print_jobs(submitted_utc)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS report_runs (
+                    report_key TEXT PRIMARY KEY,
+                    sent_utc TEXT NOT NULL
+                )
+                """
+            )
 
     def record_submission(
         self,
@@ -176,6 +184,18 @@ class PrintLedger:
                 (timestamp, timestamp, original_job_id),
             )
 
+    def mark_retry_failed(self, original_job_id: int) -> None:
+        timestamp = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE print_jobs
+                SET status = 'retry_failed', updated_utc = ?
+                WHERE printnode_job_id = ?
+                """,
+                (timestamp, original_job_id),
+            )
+
     def summary(self, start_utc: str, end_utc: str) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -201,3 +221,60 @@ class PrintLedger:
                 """
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def unnotified_errors(self) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM print_jobs
+                WHERE status = 'error' AND resolved_utc IS NULL AND notified_utc IS NULL
+                ORDER BY submitted_utc ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_notified(self, record_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "UPDATE print_jobs SET notified_utc = ?, updated_utc = ? WHERE id = ?",
+                (_utc_now(), _utc_now(), record_id),
+            )
+
+    def period_summary(self, start_utc: str, end_utc: str) -> dict[str, int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM print_jobs
+                WHERE retry_of_job_id IS NULL
+                  AND submitted_utc >= ? AND submitted_utc < ?
+                GROUP BY status
+                """,
+                (start_utc, end_utc),
+            ).fetchall()
+        statuses = {str(row["status"]): int(row["count"]) for row in rows}
+        successful = statuses.get("done", 0) + statuses.get("recovered", 0)
+        failed = statuses.get("error", 0) + statuses.get("retry_failed", 0)
+        pending = sum(statuses.values()) - successful - failed
+        return {
+            "total": sum(statuses.values()),
+            "successful": successful,
+            "recovered": statuses.get("recovered", 0),
+            "failed": failed,
+            "pending": pending,
+        }
+
+    def has_report_run(self, report_key: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM report_runs WHERE report_key = ?",
+                (report_key,),
+            ).fetchone()
+        return row is not None
+
+    def record_report_run(self, report_key: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO report_runs(report_key, sent_utc) VALUES (?, ?)",
+                (report_key, _utc_now()),
+            )

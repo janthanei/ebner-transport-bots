@@ -31,6 +31,11 @@ def _get_domains(name: str) -> list[str]:
     return [d.strip().lower() for d in value.split(",") if d.strip()]
 
 
+def _get_list(name: str) -> list[str]:
+    value = os.getenv(name, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class AppConfig:
     mail_provider: str
@@ -64,6 +69,21 @@ class AppConfig:
     print_not_before_utc: str
     print_retry_enabled: bool
     print_retry_delay_seconds: int
+    print_email_enabled: bool
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_starttls: bool
+    smtp_from_email: str
+    smtp_from_name: str
+    print_alert_to: list[str]
+    print_alert_cc: list[str]
+    print_error_share_path: str
+    print_weekly_report_enabled: bool
+    print_weekly_report_weekday: int
+    print_weekly_report_hour: int
+    print_report_timezone: str
     duplicate_content_hash_shadow: bool
     duplicate_content_hash_active: bool
     retention_delete_after_days: int
@@ -100,6 +120,30 @@ class AppConfig:
             print_not_before_utc=os.getenv("PRINT_NOT_BEFORE_UTC", "").strip(),
             print_retry_enabled=_get_bool("PRINT_RETRY_ENABLED", default=True),
             print_retry_delay_seconds=_get_int("PRINT_RETRY_DELAY_SECONDS", 60),
+            print_email_enabled=_get_bool("PRINT_EMAIL_ENABLED", default=False),
+            smtp_host=os.getenv("SMTP_HOST", "").strip(),
+            smtp_port=_get_int("SMTP_PORT", 587),
+            smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
+            smtp_password=os.getenv("SMTP_PASSWORD", ""),
+            smtp_starttls=_get_bool("SMTP_STARTTLS", default=True),
+            smtp_from_email=os.getenv("SMTP_FROM_EMAIL", "").strip(),
+            smtp_from_name=os.getenv("SMTP_FROM_NAME", "Ebner Druckservice").strip(),
+            print_alert_to=_get_list("PRINT_ALERT_TO"),
+            print_alert_cc=_get_list("PRINT_ALERT_CC"),
+            print_error_share_path=os.getenv(
+                "PRINT_ERROR_SHARE_PATH",
+                r"\\45.154.207.113\EbnerTransport\Rechnungen\druck_fehler",
+            ).strip(),
+            print_weekly_report_enabled=_get_bool(
+                "PRINT_WEEKLY_REPORT_ENABLED",
+                default=True,
+            ),
+            print_weekly_report_weekday=_get_int("PRINT_WEEKLY_REPORT_WEEKDAY", 0),
+            print_weekly_report_hour=_get_int("PRINT_WEEKLY_REPORT_HOUR", 8),
+            print_report_timezone=os.getenv(
+                "PRINT_REPORT_TIMEZONE",
+                "Europe/Berlin",
+            ).strip(),
             duplicate_content_hash_shadow=_get_bool("DUPLICATE_CONTENT_HASH_SHADOW", default=False),
             duplicate_content_hash_active=_get_bool("DUPLICATE_CONTENT_HASH_ACTIVE", default=False),
             retention_delete_after_days=_get_int("RETENTION_DELETE_AFTER_DAYS", 0),

@@ -18,6 +18,7 @@ from .content_fingerprint import fingerprint_file
 from .duplicate_store import DuplicateStore
 from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
+from .notifications import PrintNotificationService
 from .print_job_store import PendingPrintJob, PrintJobStore
 from .print_ledger import PrintLedger
 from .print_retry import classify_retry, normalize_pdf
@@ -326,6 +327,8 @@ def _reconcile_pending_print_jobs(
                     file_path=moved,
                     error_message=error_message,
                 )
+                if job.retry_count and job.original_job_id is not None:
+                    ledger.mark_retry_failed(job.original_job_id)
             LOGGER.warning(
                 "Print error job_id=%s moved_to=%s retry_count=%s error=%s",
                 job_id,
@@ -748,6 +751,29 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             retry_delay_seconds=config.print_retry_delay_seconds,
         )
         job_store.flush()
+
+    if config.print_email_enabled and print_ledger is not None:
+        notifier = PrintNotificationService(
+            smtp_host=config.smtp_host,
+            smtp_port=config.smtp_port,
+            smtp_username=config.smtp_username,
+            smtp_password=config.smtp_password,
+            smtp_starttls=config.smtp_starttls,
+            from_email=config.smtp_from_email,
+            from_name=config.smtp_from_name,
+            recipients=config.print_alert_to,
+            cc=config.print_alert_cc,
+            error_share_path=config.print_error_share_path,
+            report_timezone=config.print_report_timezone,
+            weekly_weekday=config.print_weekly_report_weekday,
+            weekly_hour=config.print_weekly_report_hour,
+        )
+        notifier.send_unnotified_errors(print_ledger)
+        if config.print_weekly_report_enabled:
+            try:
+                notifier.maybe_send_weekly_report(print_ledger)
+            except Exception as exc:
+                LOGGER.exception("Weekly print report failed error=%s", exc)
 
     duplicate_store.flush()
     state_store.flush()

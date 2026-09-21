@@ -99,6 +99,21 @@ Important variables:
 - `RETENTION_DELETE_AFTER_DAYS`: delete dated output folders older than this many days, but never while pending print jobs still exist for that day
 - unresolved files in the global `druck_fehler` archive are never removed by dated-folder retention
 
+### Print Notifications
+
+- `PRINT_EMAIL_ENABLED`: enable SMTP failure alerts and reports; defaults to `false`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `SMTP_STARTTLS`: use STARTTLS; defaults to `true`
+- `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
+- `PRINT_ALERT_TO`, `PRINT_ALERT_CC`: comma-separated recipients
+- `PRINT_ERROR_SHARE_PATH`: copyable SMB path included in failure emails
+- `PRINT_WEEKLY_REPORT_ENABLED`: send the previous week's durable print statistics
+- `PRINT_WEEKLY_REPORT_WEEKDAY`: Monday is `0`; defaults to `0`
+- `PRINT_WEEKLY_REPORT_HOUR`: local report hour; defaults to `8`
+- `PRINT_REPORT_TIMEZONE`: defaults to `Europe/Berlin`
+
+Final print errors generate one immediate email. SMTP delivery failures remain unnotified in the ledger and are retried on a later cycle. Weekly reports are recorded by period so service restarts cannot send the same report twice.
+
 ### Logging
 
 - `LOG_LEVEL`
