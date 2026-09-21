@@ -211,7 +211,7 @@ If printing is enabled:
    - `done` -> move file to `druck_erfolg`
    - `error` -> move file to the permanent global `druck_fehler/YYYY-MM-DD` archive
 5. Every submission and terminal state is retained in `state/print_history.sqlite3` for lifetime statistics and reporting.
-6. A classified PDF-renderer or transient failure is retried once. Renderer failures are normalized with Ghostscript first; ambiguous failures are not retried automatically because their physical print state is uncertain.
+6. A classified PDF-renderer or transient failure is retried once. Renderer failures are normalized with Ghostscript or the bundled PyMuPDF raster fallback first; ambiguous failures are not retried automatically because their physical print state is uncertain.
 
 ## Important Operational Notes
 
