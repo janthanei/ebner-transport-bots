@@ -13,6 +13,7 @@ class PendingPrintJob:
     created_utc: str
     email_uid: str = ""
     email_subject: str = ""
+    email_web_url: str = ""
     retry_count: int = 0
     original_job_id: int | None = None
     retry_after_utc: str = ""
@@ -42,6 +43,7 @@ class PrintJobStore:
                     created_utc=str(item["created_utc"]),
                     email_uid=str(item.get("email_uid", "")),
                     email_subject=str(item.get("email_subject", "")),
+                    email_web_url=str(item.get("email_web_url", "")),
                     retry_count=int(item.get("retry_count", 0)),
                     original_job_id=(
                         int(item["original_job_id"])

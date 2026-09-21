@@ -290,6 +290,7 @@ def _reconcile_pending_print_jobs(
                         created_utc=current_time.isoformat(),
                         email_uid=job.email_uid,
                         email_subject=job.email_subject,
+                        email_web_url=job.email_web_url,
                         retry_count=1,
                         original_job_id=original_job_id,
                     )
@@ -303,6 +304,7 @@ def _reconcile_pending_print_jobs(
                             printer_id=print_client.printer_id,
                             email_uid=job.email_uid,
                             email_subject=job.email_subject,
+                            email_web_url=job.email_web_url,
                             retry_count=1,
                             original_job_id=original_job_id,
                             retry_of_job_id=job_id,
@@ -413,6 +415,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 printer_id=config.printnode_printer_id,
                 email_uid=pending_job.email_uid,
                 email_subject=pending_job.email_subject,
+                email_web_url=pending_job.email_web_url,
                 retry_count=pending_job.retry_count,
                 original_job_id=pending_job.original_job_id,
                 submitted_utc=pending_job.created_utc,
@@ -685,6 +688,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                                 created_utc=datetime.now(timezone.utc).isoformat(),
                                 email_uid=email_obj.uid,
                                 email_subject=email_obj.subject,
+                                email_web_url=email_obj.web_url,
                                 original_job_id=int(job_id),
                             )
                         )
@@ -696,6 +700,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                             printer_id=config.printnode_printer_id,
                             email_uid=email_obj.uid,
                             email_subject=email_obj.subject,
+                            email_web_url=email_obj.web_url,
                             original_job_id=int(job_id),
                         )
                     LOGGER.info(
@@ -715,6 +720,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                                 error_message=str(exc),
                                 email_uid=email_obj.uid,
                                 email_subject=email_obj.subject,
+                                email_web_url=email_obj.web_url,
                             )
                         LOGGER.exception(
                             "Print submission failed uid=%s file=%s moved_to=%s error=%s",

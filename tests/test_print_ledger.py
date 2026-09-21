@@ -1,6 +1,31 @@
+import sqlite3
 from pathlib import Path
 
 from email_invoice_bot.print_ledger import PrintLedger
+
+
+def test_print_ledger_migrates_existing_database_for_email_links(tmp_path: Path):
+    database = tmp_path / "print_history.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE print_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                printnode_job_id INTEGER UNIQUE,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                submitted_utc TEXT NOT NULL,
+                updated_utc TEXT NOT NULL
+            )
+            """
+        )
+
+    PrintLedger(database)
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(print_jobs)")}
+    assert "email_web_url" in columns
 
 
 def test_print_ledger_records_and_updates_job(tmp_path: Path):
@@ -13,6 +38,7 @@ def test_print_ledger_records_and_updates_job(tmp_path: Path):
         printer_id=456,
         email_uid="mail-1",
         email_subject="Invoice 1",
+        email_web_url="https://outlook.office.com/mail/deeplink/read/message-1",
         submitted_utc="2026-09-21T08:00:00+00:00",
     )
     ledger.update_status(
@@ -25,6 +51,7 @@ def test_print_ledger_records_and_updates_job(tmp_path: Path):
     assert job is not None
     assert job["status"] == "done"
     assert job["email_subject"] == "Invoice 1"
+    assert job["email_web_url"] == "https://outlook.office.com/mail/deeplink/read/message-1"
     assert job["resolved_utc"] is not None
     assert ledger.summary(
         "2026-09-21T00:00:00+00:00",

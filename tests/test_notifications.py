@@ -61,6 +61,7 @@ def test_sends_each_failure_only_once(tmp_path: Path):
         file_path=failed,
         printer_id=456,
         email_subject="Invoice 1",
+        email_web_url="https://outlook.office.com/mail/deeplink/read/message-1",
         retry_count=1,
         submitted_utc="2026-09-20T10:00:00+00:00",
     )
@@ -74,7 +75,12 @@ def test_sends_each_failure_only_once(tmp_path: Path):
     message = StubSmtp.messages[0]
     assert message["To"] == "christian@example.com"
     assert message["Cc"] == "jan@example.com"
-    assert "Wiederholungsversuch" in message.get_content()
+    plain = message.get_body(preferencelist=("plain",)).get_content()
+    html = message.get_body(preferencelist=("html",)).get_content()
+    assert "automatische zweite Druckversuch" in plain
+    assert "PrintNode" not in plain
+    assert "Originale E-Mail öffnen" in html
+    assert "https://outlook.office.com/mail/deeplink/read/message-1" in html
 
 
 def test_weekly_report_is_idempotent(tmp_path: Path):
@@ -97,4 +103,6 @@ def test_weekly_report_is_idempotent(tmp_path: Path):
     message = StubSmtp.messages[0]
     assert message["To"] == "jan@example.com"
     assert message["Cc"] is None
-    assert "Dokumente gesamt: 1" in message.get_content()
+    plain = message.get_body(preferencelist=("plain",)).get_content()
+    assert "Verarbeitete Dokumente: 1" in plain
+    assert "14.09.2026 bis 20.09.2026" in plain

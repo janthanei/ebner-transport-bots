@@ -34,6 +34,7 @@ class PrintLedger:
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     email_uid TEXT NOT NULL DEFAULT '',
                     email_subject TEXT NOT NULL DEFAULT '',
+                    email_web_url TEXT NOT NULL DEFAULT '',
                     file_name TEXT NOT NULL,
                     file_path TEXT NOT NULL,
                     printer_id INTEGER NOT NULL DEFAULT 0,
@@ -52,6 +53,14 @@ class PrintLedger:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_print_jobs_submitted ON print_jobs(submitted_utc)"
             )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(print_jobs)").fetchall()
+            }
+            if "email_web_url" not in columns:
+                connection.execute(
+                    "ALTER TABLE print_jobs ADD COLUMN email_web_url TEXT NOT NULL DEFAULT ''"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS report_runs (
@@ -69,6 +78,7 @@ class PrintLedger:
         printer_id: int,
         email_uid: str = "",
         email_subject: str = "",
+        email_web_url: str = "",
         retry_count: int = 0,
         original_job_id: int | None = None,
         retry_of_job_id: int | None = None,
@@ -81,11 +91,15 @@ class PrintLedger:
                 """
                 INSERT INTO print_jobs (
                     printnode_job_id, original_job_id, retry_of_job_id, retry_count,
-                    email_uid, email_subject, file_name, file_path, printer_id,
+                    email_uid, email_subject, email_web_url, file_name, file_path, printer_id,
                     status, submitted_utc, updated_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
                 ON CONFLICT(printnode_job_id) DO UPDATE SET
                     file_path = excluded.file_path,
+                    email_web_url = CASE
+                        WHEN excluded.email_web_url != '' THEN excluded.email_web_url
+                        ELSE print_jobs.email_web_url
+                    END,
                     updated_utc = excluded.updated_utc
                 """,
                 (
@@ -95,6 +109,7 @@ class PrintLedger:
                     retry_count,
                     email_uid,
                     email_subject,
+                    email_web_url,
                     file_path.name,
                     str(file_path),
                     printer_id,
@@ -111,19 +126,21 @@ class PrintLedger:
         error_message: str,
         email_uid: str = "",
         email_subject: str = "",
+        email_web_url: str = "",
     ) -> None:
         timestamp = _utc_now()
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO print_jobs (
-                    email_uid, email_subject, file_name, file_path, printer_id,
+                    email_uid, email_subject, email_web_url, file_name, file_path, printer_id,
                     status, error_message, submitted_utc, updated_utc
-                ) VALUES (?, ?, ?, ?, ?, 'error', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'error', ?, ?, ?)
                 """,
                 (
                     email_uid,
                     email_subject,
+                    email_web_url,
                     file_path.name,
                     str(file_path),
                     printer_id,

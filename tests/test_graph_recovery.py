@@ -43,6 +43,27 @@ def test_mail_backlog_larger_than_page_size(monkeypatch):
     assert len(graph.fetch_recent_messages(10, 72)) == 30
 
 
+def test_mail_web_link_is_available_for_failure_notifications(monkeypatch):
+    graph = client()
+    requested_paths = []
+    message = {
+        "id": "message-1",
+        "subject": "Invoice 1",
+        "receivedDateTime": "2026-09-21T10:00:00Z",
+        "webLink": "https://outlook.office.com/mail/deeplink/read/message-1",
+    }
+
+    def collection(path):
+        requested_paths.append(path)
+        return [message]
+
+    monkeypatch.setattr(graph, "_collection", collection)
+    emails = graph.fetch_recent_messages(10, 72)
+
+    assert "webLink" in requested_paths[0]
+    assert emails[0].web_url == message["webLink"]
+
+
 def test_untrusted_next_link_never_receives_token(monkeypatch):
     graph = client()
     monkeypatch.setattr(graph, "_api_get", lambda path: {

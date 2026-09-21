@@ -175,7 +175,7 @@ class GraphClient:
         user = quote(self.mailbox)
         since = datetime.now(timezone.utc) - timedelta(hours=max(1, lookback_hours))
         since_str = since.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
-        select = "id,subject,from,receivedDateTime,body,hasAttachments,isRead,internetMessageId"
+        select = "id,subject,from,receivedDateTime,body,hasAttachments,isRead,internetMessageId,webLink"
         qs = urlencode({
             "$filter": f"receivedDateTime ge {since_str}",
             "$orderby": "receivedDateTime desc",
@@ -211,6 +211,7 @@ class GraphClient:
                 links=links,
                 attachments=[],
                 has_attachments=has_attachments,
+                web_url=str(msg.get("webLink", "")),
             ))
             LOGGER.info("Graph message parse done mailbox=%s index=%s/%s message_id=%s has_attachments=%s links=%s", self.mailbox, index, len(raw_messages), msg_id, has_attachments, len(links))
 
