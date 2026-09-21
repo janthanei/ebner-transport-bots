@@ -67,7 +67,6 @@ def test_reconcile_moves_error_to_druck_fehler(tmp_path: Path):
 
     assert summary.printed_jobs == 0
     assert not pending_path.exists()
-    assert (day_dir / "druck_fehler" / "invoice.pdf").exists()
+    assert (tmp_path / "druck_fehler" / "2026-04-16" / "invoice.pdf").exists()
     assert store.items() == []
     assert reloaded.items() == []
-

@@ -72,6 +72,13 @@ def _move_to_print_bucket(file_path: Path, bucket: str) -> Path:
     if base_dir.name in {"druck_erfolg", "druck_fehler", "druck_ausstehend"}:
         base_dir = base_dir.parent
     target_dir = base_dir / bucket
+    if bucket == "druck_fehler":
+        try:
+            datetime.strptime(base_dir.name, "%Y-%m-%d")
+        except ValueError:
+            pass
+        else:
+            target_dir = base_dir.parent / bucket / base_dir.name
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = DailyPdfStorage.unique_path(target_dir / file_path.name)
     shutil.move(str(file_path), str(target_path))

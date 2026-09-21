@@ -41,7 +41,7 @@ the message can be retried. `MAX_EMAILS_PER_CYCLE` sets the Graph page size.
 - `output/Rechnungen/YYYY-MM-DD/`: saved and downloaded PDFs
 - `output/Rechnungen/YYYY-MM-DD/druck_ausstehend/`: submitted to printer, not yet confirmed done
 - `output/Rechnungen/YYYY-MM-DD/druck_erfolg/`: PrintNode reported `done`
-- `output/Rechnungen/YYYY-MM-DD/druck_fehler/`: PrintNode reported `error` or submission failed
+- `output/Rechnungen/druck_fehler/YYYY-MM-DD/`: permanent archive for PrintNode errors and failed submissions
 
 ## Configuration
 
@@ -94,6 +94,7 @@ Important variables:
 ### Retention
 
 - `RETENTION_DELETE_AFTER_DAYS`: delete dated output folders older than this many days, but never while pending print jobs still exist for that day
+- unresolved files in the global `druck_fehler` archive are never removed by dated-folder retention
 
 ### Logging
 
@@ -190,7 +191,7 @@ If printing is enabled:
 3. Pending jobs are tracked in `state/pending_print_jobs.json`.
 4. On later reconciliation:
    - `done` -> move file to `druck_erfolg`
-   - `error` -> move file to `druck_fehler`
+   - `error` -> move file to the permanent global `druck_fehler/YYYY-MM-DD` archive
 
 ## Important Operational Notes
 

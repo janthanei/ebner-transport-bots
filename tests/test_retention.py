@@ -72,3 +72,23 @@ def test_purge_old_output_skips_day_referenced_by_pending_job_state(tmp_path):
     assert summary.deleted_days == 0
     assert summary.skipped_pending_days == 1
     assert old_day.exists()
+
+
+def test_purge_old_output_never_deletes_global_error_archive(tmp_path):
+    rechnungen = tmp_path / "output" / "Rechnungen"
+    old_day = rechnungen / "2026-04-12"
+    error_archive = rechnungen / "druck_fehler" / "2026-04-12"
+    old_day.mkdir(parents=True)
+    error_archive.mkdir(parents=True)
+    (old_day / "invoice.pdf").write_bytes(b"old")
+    (error_archive / "failed.pdf").write_bytes(b"failed")
+
+    summary = purge_old_output(
+        tmp_path / "output",
+        7,
+        today=date(2026, 4, 20),
+    )
+
+    assert summary.deleted_days == 1
+    assert not old_day.exists()
+    assert (error_archive / "failed.pdf").exists()

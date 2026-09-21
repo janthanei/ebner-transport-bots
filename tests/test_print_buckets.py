@@ -28,3 +28,17 @@ def test_move_to_print_bucket_suffixes_existing(tmp_path: Path):
     assert moved == tmp_path / "druck_fehler" / "invoice_2.pdf"
     assert existing.read_bytes() == b"old"
     assert moved.read_bytes() == b"new"
+
+
+def test_move_error_from_dated_folder_to_global_archive(tmp_path: Path):
+    day_dir = tmp_path / "Rechnungen" / "2026-04-16"
+    pending_dir = day_dir / "druck_ausstehend"
+    pending_dir.mkdir(parents=True)
+    src = pending_dir / "invoice.pdf"
+    src.write_bytes(b"failed")
+
+    moved = _move_to_print_bucket(src, "druck_fehler")
+
+    assert moved == tmp_path / "Rechnungen" / "druck_fehler" / "2026-04-16" / "invoice.pdf"
+    assert moved.read_bytes() == b"failed"
+    assert not src.exists()
