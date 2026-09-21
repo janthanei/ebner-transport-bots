@@ -62,6 +62,8 @@ class AppConfig:
     printnode_api_key: str
     printnode_printer_id: int
     print_not_before_utc: str
+    print_retry_enabled: bool
+    print_retry_delay_seconds: int
     duplicate_content_hash_shadow: bool
     duplicate_content_hash_active: bool
     retention_delete_after_days: int
@@ -96,6 +98,8 @@ class AppConfig:
             printnode_api_key=os.getenv("PRINTNODE_API_KEY", "").strip(),
             printnode_printer_id=_get_int("PRINTNODE_PRINTER_ID", 0),
             print_not_before_utc=os.getenv("PRINT_NOT_BEFORE_UTC", "").strip(),
+            print_retry_enabled=_get_bool("PRINT_RETRY_ENABLED", default=True),
+            print_retry_delay_seconds=_get_int("PRINT_RETRY_DELAY_SECONDS", 60),
             duplicate_content_hash_shadow=_get_bool("DUPLICATE_CONTENT_HASH_SHADOW", default=False),
             duplicate_content_hash_active=_get_bool("DUPLICATE_CONTENT_HASH_ACTIVE", default=False),
             retention_delete_after_days=_get_int("RETENTION_DELETE_AFTER_DAYS", 0),

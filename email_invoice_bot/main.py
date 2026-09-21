@@ -5,7 +5,7 @@ import signal
 import shutil
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +20,7 @@ from .email_parser import ParsedEmail, parse_email
 from .link_extractor import filter_target_links
 from .print_job_store import PendingPrintJob, PrintJobStore
 from .print_ledger import PrintLedger
+from .print_retry import classify_retry, normalize_pdf
 from .printnode_client import PrintNodeClient
 from .retention import purge_old_output
 from .state_store import StateStore
@@ -198,7 +199,11 @@ def _reconcile_pending_print_jobs(
     job_store: PrintJobStore,
     summary: ProcessSummary,
     ledger: PrintLedger | None = None,
+    retry_enabled: bool = False,
+    retry_delay_seconds: int = 60,
+    now_utc: datetime | None = None,
 ) -> None:
+    current_time = now_utc or datetime.now(timezone.utc)
     for job in job_store.items():
         job_id = job.job_id
         try:
@@ -222,6 +227,8 @@ def _reconcile_pending_print_jobs(
             moved = _move_to_print_bucket(file_path, "druck_erfolg")
             if ledger is not None:
                 ledger.update_status(job_id, "done", file_path=moved)
+                if job.retry_count and job.original_job_id is not None:
+                    ledger.mark_recovered(job.original_job_id)
             summary.printed_jobs += 1
             LOGGER.info("Print done job_id=%s moved_to=%s", job_id, moved)
             job_store.remove(job_id)
@@ -229,10 +236,103 @@ def _reconcile_pending_print_jobs(
             continue
 
         if state == "error":
+            error_message = job.last_error_message
+            if not error_message:
+                try:
+                    states = print_client.get_printjob_states(job_id)
+                    error_message = next(
+                        (
+                            str(item.get("message", ""))
+                            for item in reversed(states)
+                            if str(item.get("state", "")).lower() == "error"
+                        ),
+                        "",
+                    )
+                except Exception as exc:
+                    LOGGER.warning("Print job state history failed job_id=%s error=%s", job_id, exc)
+
+            retry_policy = classify_retry(error_message) if retry_enabled else None
+            if retry_policy is not None and job.retry_count == 0:
+                if not job.retry_after_utc:
+                    retry_after = current_time + timedelta(seconds=max(retry_delay_seconds, 0))
+                    job.retry_after_utc = retry_after.isoformat()
+                    job.last_error_message = error_message
+                    job_store.replace(job_id, job)
+                    job_store.flush()
+                    if ledger is not None:
+                        ledger.update_status(job_id, "retry_waiting", error_message=error_message)
+                    LOGGER.warning(
+                        "Print retry scheduled job_id=%s policy=%s retry_after=%s error=%s",
+                        job_id,
+                        retry_policy,
+                        job.retry_after_utc,
+                        error_message,
+                    )
+                    continue
+
+                retry_after = datetime.fromisoformat(job.retry_after_utc.replace("Z", "+00:00"))
+                if current_time < retry_after:
+                    continue
+
+                try:
+                    if retry_policy == "normalize":
+                        normalize_pdf(file_path)
+                    retry_job_id = print_client.submit_pdf(
+                        file_path,
+                        idempotency_key=f"ebner-retry-{job_id}",
+                    )
+                    original_job_id = job.original_job_id or job_id
+                    replacement = PendingPrintJob(
+                        job_id=int(retry_job_id),
+                        file_path=job.file_path,
+                        base_dir=job.base_dir,
+                        created_utc=current_time.isoformat(),
+                        email_uid=job.email_uid,
+                        email_subject=job.email_subject,
+                        retry_count=1,
+                        original_job_id=original_job_id,
+                    )
+                    job_store.replace(job_id, replacement)
+                    job_store.flush()
+                    if ledger is not None:
+                        ledger.update_status(job_id, "retried", error_message=error_message)
+                        ledger.record_submission(
+                            job_id=int(retry_job_id),
+                            file_path=file_path,
+                            printer_id=print_client.printer_id,
+                            email_uid=job.email_uid,
+                            email_subject=job.email_subject,
+                            retry_count=1,
+                            original_job_id=original_job_id,
+                            retry_of_job_id=job_id,
+                            submitted_utc=current_time.isoformat(),
+                        )
+                    LOGGER.warning(
+                        "Print retry submitted original_job_id=%s retry_job_id=%s policy=%s",
+                        job_id,
+                        retry_job_id,
+                        retry_policy,
+                    )
+                    continue
+                except Exception as exc:
+                    error_message = f"{error_message}; retry failed: {exc}".strip("; ")
+                    LOGGER.exception("Print retry failed job_id=%s error=%s", job_id, exc)
+
             moved = _move_to_print_bucket(file_path, "druck_fehler")
             if ledger is not None:
-                ledger.update_status(job_id, "error", file_path=moved)
-            LOGGER.warning("Print error job_id=%s moved_to=%s", job_id, moved)
+                ledger.update_status(
+                    job_id,
+                    "error",
+                    file_path=moved,
+                    error_message=error_message,
+                )
+            LOGGER.warning(
+                "Print error job_id=%s moved_to=%s retry_count=%s error=%s",
+                job_id,
+                moved,
+                job.retry_count,
+                error_message,
+            )
             job_store.remove(job_id)
             job_store.flush()
             continue
@@ -314,7 +414,14 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
                 original_job_id=pending_job.original_job_id,
                 submitted_utc=pending_job.created_utc,
             )
-        _reconcile_pending_print_jobs(print_client, job_store, summary, print_ledger)
+        _reconcile_pending_print_jobs(
+            print_client,
+            job_store,
+            summary,
+            print_ledger,
+            retry_enabled=config.print_retry_enabled,
+            retry_delay_seconds=config.print_retry_delay_seconds,
+        )
     print_not_before = _parse_not_before_utc(config.print_not_before_utc)
 
     for email_obj in emails:
@@ -632,7 +739,14 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
         )
 
     if print_client is not None and job_store is not None:
-        _reconcile_pending_print_jobs(print_client, job_store, summary, print_ledger)
+        _reconcile_pending_print_jobs(
+            print_client,
+            job_store,
+            summary,
+            print_ledger,
+            retry_enabled=config.print_retry_enabled,
+            retry_delay_seconds=config.print_retry_delay_seconds,
+        )
         job_store.flush()
 
     duplicate_store.flush()

@@ -164,6 +164,18 @@ class PrintLedger:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def mark_recovered(self, original_job_id: int) -> None:
+        timestamp = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE print_jobs
+                SET status = 'recovered', updated_utc = ?, resolved_utc = ?
+                WHERE printnode_job_id = ?
+                """,
+                (timestamp, timestamp, original_job_id),
+            )
+
     def summary(self, start_utc: str, end_utc: str) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(

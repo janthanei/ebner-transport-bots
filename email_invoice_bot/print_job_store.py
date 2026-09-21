@@ -15,6 +15,8 @@ class PendingPrintJob:
     email_subject: str = ""
     retry_count: int = 0
     original_job_id: int | None = None
+    retry_after_utc: str = ""
+    last_error_message: str = ""
 
 
 class PrintJobStore:
@@ -46,6 +48,8 @@ class PrintJobStore:
                         if item.get("original_job_id") is not None
                         else None
                     ),
+                    retry_after_utc=str(item.get("retry_after_utc", "")),
+                    last_error_message=str(item.get("last_error_message", "")),
                 )
             except Exception:
                 continue
@@ -62,6 +66,11 @@ class PrintJobStore:
         if job_id not in self._jobs:
             return
         self._jobs.pop(job_id, None)
+        self._dirty = True
+
+    def replace(self, old_job_id: int, job: PendingPrintJob) -> None:
+        self._jobs.pop(old_job_id, None)
+        self._jobs[job.job_id] = job
         self._dirty = True
 
     def items(self) -> list[PendingPrintJob]:

@@ -14,7 +14,12 @@ class PrintNodeClient:
         self.printer_id = printer_id
         self.source = source
 
-    def submit_pdf(self, pdf_path: Path, title: str | None = None) -> int:
+    def submit_pdf(
+        self,
+        pdf_path: Path,
+        title: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
         pdf_bytes = pdf_path.read_bytes()
         payload = {
             "printerId": self.printer_id,
@@ -25,13 +30,16 @@ class PrintNodeClient:
         }
 
         auth = base64.b64encode(f"{self.api_key}:".encode("utf-8")).decode("ascii")
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/json",
+        }
+        if idempotency_key:
+            headers["X-Idempotency-Key"] = idempotency_key
         req = Request(
             "https://api.printnode.com/printjobs",
             data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Basic {auth}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             method="POST",
         )
         try:
@@ -63,3 +71,25 @@ class PrintNodeClient:
         if not isinstance(data[0], dict):
             raise RuntimeError(f"PrintNode get_printjob returned invalid payload job_id={job_id}")
         return data[0]
+
+    def get_printjob_states(self, job_id: int) -> list[dict[str, Any]]:
+        auth = base64.b64encode(f"{self.api_key}:".encode("utf-8")).decode("ascii")
+        req = Request(
+            f"https://api.printnode.com/printjobs/{job_id}/states",
+            headers={"Authorization": f"Basic {auth}"},
+        )
+        try:
+            with urlopen(req, timeout=30) as response:
+                body = response.read().decode("utf-8", errors="replace").strip()
+                data = json.loads(body) if body else []
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"PrintNode get_printjob_states failed status={exc.code} body={detail}"
+            ) from exc
+
+        if len(data) == 1 and isinstance(data[0], list):
+            data = data[0]
+        if not isinstance(data, list):
+            raise RuntimeError(f"PrintNode returned invalid states job_id={job_id}")
+        return [item for item in data if isinstance(item, dict)]

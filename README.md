@@ -85,6 +85,8 @@ Important variables:
 - `PRINTNODE_API_KEY`
 - `PRINTNODE_PRINTER_ID`
 - `PRINT_NOT_BEFORE_UTC`: optional cutoff for printing only newer messages
+- `PRINT_RETRY_ENABLED`: retry one classified renderer or transient PrintNode failure; defaults to `true`
+- `PRINT_RETRY_DELAY_SECONDS`: delay before the single retry; defaults to `60`
 
 ### Duplicate Shadow Mode
 
@@ -194,6 +196,7 @@ If printing is enabled:
    - `done` -> move file to `druck_erfolg`
    - `error` -> move file to the permanent global `druck_fehler/YYYY-MM-DD` archive
 5. Every submission and terminal state is retained in `state/print_history.sqlite3` for lifetime statistics and reporting.
+6. A classified PDF-renderer or transient failure is retried once. Renderer failures are normalized with Ghostscript first; ambiguous failures are not retried automatically because their physical print state is uncertain.
 
 ## Important Operational Notes
 
