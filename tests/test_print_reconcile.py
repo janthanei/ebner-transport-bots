@@ -155,3 +155,71 @@ def test_reconcile_normalizes_and_retries_renderer_error_once(tmp_path: Path, mo
     assert ledger.get_job(2)["status"] == "recovered"
     assert ledger.get_job(3)["status"] == "done"
     assert (day_dir / "druck_erfolg" / "invoice.pdf").exists()
+
+
+def test_reconcile_retries_expired_job_once_then_records_failure(tmp_path: Path):
+    day_dir = tmp_path / "2026-04-16"
+    day_dir.mkdir(parents=True)
+    src = day_dir / "invoice.pdf"
+    src.write_bytes(b"pdf")
+    pending_path = _move_to_print_bucket(src, "druck_ausstehend")
+    store = PrintJobStore(tmp_path / "state.json")
+    store.add(
+        PendingPrintJob(
+            job_id=2,
+            file_path=str(pending_path),
+            base_dir=str(day_dir),
+            created_utc="2026-04-16T00:00:00+00:00",
+            original_job_id=2,
+        )
+    )
+    store.flush()
+    ledger = PrintLedger(tmp_path / "history.sqlite3")
+    ledger.record_submission(
+        job_id=2,
+        file_path=pending_path,
+        printer_id=456,
+        submitted_utc="2026-04-16T00:00:00+00:00",
+    )
+    client = StubPrintNodeClient({2: "expired"})
+    now = datetime(2026, 4, 16, tzinfo=timezone.utc)
+
+    _reconcile_pending_print_jobs(
+        client,
+        store,
+        ProcessSummary(),
+        ledger,
+        retry_enabled=True,
+        retry_delay_seconds=0,
+        now_utc=now,
+    )
+    _reconcile_pending_print_jobs(
+        client,
+        store,
+        ProcessSummary(),
+        ledger,
+        retry_enabled=True,
+        retry_delay_seconds=0,
+        now_utc=now,
+    )
+
+    assert client.submissions == [(pending_path, "ebner-retry-2")]
+    assert ledger.get_job(2)["status"] == "retried"
+
+    client.states[3] = "expired"
+    _reconcile_pending_print_jobs(
+        client,
+        store,
+        ProcessSummary(),
+        ledger,
+        retry_enabled=True,
+        retry_delay_seconds=0,
+        now_utc=now,
+    )
+
+    assert store.items() == []
+    assert ledger.get_job(2)["status"] == "retry_failed"
+    assert ledger.get_job(3)["status"] == "error"
+    assert "expired before delivery" in ledger.get_job(3)["error_message"]
+    assert [job["printnode_job_id"] for job in ledger.unnotified_errors()] == [3]
+    assert (tmp_path / "druck_fehler" / "2026-04-16" / "invoice.pdf").exists()

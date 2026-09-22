@@ -214,7 +214,7 @@ def _reconcile_pending_print_jobs(
             continue
 
         state = (info.get("state") or "").lower()
-        if state in {"queued", "new", "sent"}:
+        if state in {"queued", "new", "sent", "sent_to_client", "in_progress"}:
             continue
 
         file_path = Path(job.file_path)
@@ -236,9 +236,11 @@ def _reconcile_pending_print_jobs(
             job_store.flush()
             continue
 
-        if state == "error":
+        if state in {"error", "expired"}:
             error_message = job.last_error_message
-            if not error_message:
+            if state == "expired":
+                error_message = "PrintNode job expired before delivery to the client"
+            elif not error_message:
                 try:
                     states = print_client.get_printjob_states(job_id)
                     error_message = next(
@@ -252,7 +254,9 @@ def _reconcile_pending_print_jobs(
                 except Exception as exc:
                     LOGGER.warning("Print job state history failed job_id=%s error=%s", job_id, exc)
 
-            retry_policy = classify_retry(error_message) if retry_enabled else None
+            retry_policy = None
+            if retry_enabled:
+                retry_policy = "resubmit" if state == "expired" else classify_retry(error_message)
             if retry_policy is not None and job.retry_count == 0:
                 if not job.retry_after_utc:
                     retry_after = current_time + timedelta(seconds=max(retry_delay_seconds, 0))
@@ -401,9 +405,14 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_API_KEY is missing")
         if config.printnode_printer_id <= 0:
             raise RuntimeError("PRINT_ENABLED=true but PRINTNODE_PRINTER_ID is invalid")
+        if config.printnode_expire_after_seconds <= 0:
+            raise RuntimeError(
+                "PRINT_ENABLED=true but PRINTNODE_EXPIRE_AFTER_SECONDS is invalid"
+            )
         print_client = PrintNodeClient(
             api_key=config.printnode_api_key,
             printer_id=config.printnode_printer_id,
+            expire_after_seconds=config.printnode_expire_after_seconds,
         )
         job_store = PrintJobStore(Path("state/pending_print_jobs.json"))
         job_store.load()

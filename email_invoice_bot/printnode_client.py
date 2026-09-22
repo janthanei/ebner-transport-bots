@@ -10,10 +10,17 @@ from urllib.request import Request, urlopen
 
 
 class PrintNodeClient:
-    def __init__(self, api_key: str, printer_id: int, source: str = "ebner-invoice-bot") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        printer_id: int,
+        source: str = "ebner-invoice-bot",
+        expire_after_seconds: int = 900,
+    ) -> None:
         self.api_key = api_key
         self.printer_id = printer_id
         self.source = source
+        self.expire_after_seconds = expire_after_seconds
 
     def submit_pdf(
         self,
@@ -28,6 +35,7 @@ class PrintNodeClient:
             "contentType": "pdf_base64",
             "content": base64.b64encode(pdf_bytes).decode("ascii"),
             "source": self.source,
+            "expireAfter": self.expire_after_seconds,
         }
 
         auth = base64.b64encode(f"{self.api_key}:".encode("utf-8")).decode("ascii")

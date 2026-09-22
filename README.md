@@ -84,6 +84,7 @@ Important variables:
 - `PRINT_ENABLED`
 - `PRINTNODE_API_KEY`
 - `PRINTNODE_PRINTER_ID`
+- `PRINTNODE_EXPIRE_AFTER_SECONDS`: expire jobs not delivered to the PrintNode client; defaults to `900` (15 minutes)
 - `PRINT_NOT_BEFORE_UTC`: optional cutoff for printing only newer messages
 - `PRINT_RETRY_ENABLED`: retry one classified renderer or transient PrintNode failure; defaults to `true`
 - `PRINT_RETRY_DELAY_SECONDS`: delay before the single retry; defaults to `60`
@@ -213,8 +214,9 @@ If printing is enabled:
 4. On later reconciliation:
    - `done` -> move file to `druck_erfolg`
    - `error` -> move file to the permanent global `druck_fehler/YYYY-MM-DD` archive
+   - `expired` -> retry once, then move a second expiry to `druck_fehler/YYYY-MM-DD`
 5. Every submission and terminal state is retained in `state/print_history.sqlite3` for lifetime statistics and reporting.
-6. A classified PDF-renderer or transient failure is retried once. Renderer failures are normalized with Ghostscript or the bundled PyMuPDF raster fallback first; ambiguous failures are not retried automatically because their physical print state is uncertain.
+6. A classified PDF-renderer or transient failure is retried once. Jobs that expire before reaching the PrintNode client are also safely retried once. Renderer failures are normalized with Ghostscript or the bundled PyMuPDF raster fallback first; ambiguous failures are not retried automatically because their physical print state is uncertain.
 
 Seed the durable ledger once with the history still available from PrintNode:
 

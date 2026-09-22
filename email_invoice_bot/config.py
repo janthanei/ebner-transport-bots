@@ -66,6 +66,7 @@ class AppConfig:
     print_enabled: bool
     printnode_api_key: str
     printnode_printer_id: int
+    printnode_expire_after_seconds: int
     print_not_before_utc: str
     print_retry_enabled: bool
     print_retry_delay_seconds: int
@@ -131,6 +132,10 @@ class AppConfig:
             print_enabled=_get_bool("PRINT_ENABLED", default=False),
             printnode_api_key=os.getenv("PRINTNODE_API_KEY", "").strip(),
             printnode_printer_id=_get_int("PRINTNODE_PRINTER_ID", 0),
+            printnode_expire_after_seconds=_get_int(
+                "PRINTNODE_EXPIRE_AFTER_SECONDS",
+                900,
+            ),
             print_not_before_utc=os.getenv("PRINT_NOT_BEFORE_UTC", "").strip(),
             print_retry_enabled=_get_bool("PRINT_RETRY_ENABLED", default=True),
             print_retry_delay_seconds=_get_int("PRINT_RETRY_DELAY_SECONDS", 60),
