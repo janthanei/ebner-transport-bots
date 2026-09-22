@@ -31,6 +31,22 @@ class StubSmtp:
         self.messages.append(message)
 
 
+class StubGraph:
+    def __init__(self):
+        self.messages = []
+
+    def send_mail(self, subject, body, recipients, cc, *, html_body=None):
+        self.messages.append(
+            {
+                "subject": subject,
+                "body": body,
+                "recipients": recipients,
+                "cc": cc,
+                "html_body": html_body,
+            }
+        )
+
+
 def _service() -> PrintNotificationService:
     return PrintNotificationService(
         smtp_host="smtp.example.com",
@@ -81,6 +97,44 @@ def test_sends_each_failure_only_once(tmp_path: Path):
     assert "PrintNode" not in plain
     assert "Originale E-Mail öffnen" in html
     assert "https://outlook.office.com/mail/deeplink/read/message-1" in html
+
+
+def test_sends_failure_via_graph_without_smtp(tmp_path: Path):
+    ledger = PrintLedger(tmp_path / "history.sqlite3")
+    ledger.record_submission(
+        job_id=123,
+        file_path=tmp_path / "broken.pdf",
+        printer_id=456,
+        email_subject="Invoice 1",
+        retry_count=1,
+    )
+    ledger.update_status(123, "error", error_message="renderer failed")
+    graph = StubGraph()
+    service = PrintNotificationService(
+        smtp_host="",
+        smtp_port=587,
+        smtp_username="",
+        smtp_password="",
+        smtp_starttls=True,
+        from_email="",
+        from_name="Ebner Druckservice",
+        recipients=["christian@example.com"],
+        cc=["jan@example.com"],
+        weekly_recipients=["jan@example.com"],
+        weekly_cc=[],
+        error_share_path=r"\\server\Rechnungen\druck_fehler",
+        report_timezone="Europe/Berlin",
+        weekly_weekday=0,
+        weekly_hour=8,
+        graph_client=graph,
+    )
+
+    service.send_unnotified_errors(ledger)
+
+    assert len(graph.messages) == 1
+    assert graph.messages[0]["recipients"] == ["christian@example.com"]
+    assert graph.messages[0]["cc"] == ["jan@example.com"]
+    assert "broken.pdf" in graph.messages[0]["html_body"]
 
 
 def test_weekly_report_is_idempotent(tmp_path: Path):

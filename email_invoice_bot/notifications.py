@@ -7,10 +7,14 @@ from datetime import datetime, time, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr
 from html import escape
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from .print_ledger import PrintLedger
+
+if TYPE_CHECKING:
+    from .graph_client import GraphClient
 
 
 LOGGER = logging.getLogger(__name__)
@@ -48,8 +52,11 @@ class PrintNotificationService:
         weekly_weekday: int,
         weekly_hour: int,
         smtp_factory=smtplib.SMTP,
+        graph_client: GraphClient | None = None,
     ) -> None:
-        if not smtp_host or not from_email or not recipients:
+        if not recipients:
+            raise ValueError("Print email requires PRINT_ALERT_TO")
+        if graph_client is None and (not smtp_host or not from_email):
             raise ValueError(
                 "Print email requires SMTP_HOST, SMTP_FROM_EMAIL, and PRINT_ALERT_TO"
             )
@@ -69,6 +76,7 @@ class PrintNotificationService:
         self.weekly_weekday = weekly_weekday
         self.weekly_hour = weekly_hour
         self.smtp_factory = smtp_factory
+        self.graph_client = graph_client
 
     def _send(
         self,
@@ -81,6 +89,16 @@ class PrintNotificationService:
     ) -> None:
         message_recipients = recipients or self.recipients
         message_cc = self.cc if cc is None else cc
+        if self.graph_client is not None:
+            self.graph_client.send_mail(
+                subject,
+                body,
+                message_recipients,
+                message_cc,
+                html_body=html_body,
+            )
+            return
+
         message = EmailMessage()
         message["Subject"] = subject
         message["From"] = formataddr((self.from_name, self.from_email))

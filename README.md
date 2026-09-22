@@ -101,8 +101,9 @@ Important variables:
 
 ### Print Notifications
 
-- `PRINT_EMAIL_ENABLED`: enable SMTP failure alerts and reports; defaults to `false`
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `PRINT_EMAIL_ENABLED`: enable failure alerts and reports; defaults to `false`
+- Graph mail is used automatically when `MAIL_PROVIDER=graph`; `Mail.Send` application permission is required for `GRAPH_MAILBOX`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`: fallback transport for non-Graph installations
 - `SMTP_STARTTLS`: use STARTTLS; defaults to `true`
 - `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`
 - `PRINT_ALERT_TO`, `PRINT_ALERT_CC`: comma-separated recipients
@@ -113,7 +114,7 @@ Important variables:
 - `PRINT_WEEKLY_REPORT_HOUR`: local report hour; defaults to `8`
 - `PRINT_REPORT_TIMEZONE`: defaults to `Europe/Berlin`
 
-Final print errors generate one immediate email. SMTP delivery failures remain unnotified in the ledger and are retried on a later cycle. Weekly reports list final failures from that reporting week once, rather than treating them as permanently open, and are recorded by period so service restarts cannot send the same report twice.
+Final print errors generate one immediate email. Delivery failures remain unnotified in the ledger and are retried on a later cycle. Weekly reports list final failures from that reporting week once, rather than treating them as permanently open, and are recorded by period so service restarts cannot send the same report twice.
 For Microsoft Graph messages, notifications include a direct Outlook link to the original email. Existing historical jobs without a stored link continue to use the error-folder path as a fallback.
 
 ### Logging

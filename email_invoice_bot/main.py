@@ -775,6 +775,7 @@ def process_cycle(config: AppConfig) -> ProcessSummary:
             report_timezone=config.print_report_timezone,
             weekly_weekday=config.print_weekly_report_weekday,
             weekly_hour=config.print_weekly_report_hour,
+            graph_client=graph_client,
         )
         notifier.send_unnotified_errors(print_ledger)
         if config.print_weekly_report_enabled:

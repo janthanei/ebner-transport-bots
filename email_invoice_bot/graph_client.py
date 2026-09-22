@@ -110,10 +110,63 @@ class GraphClient:
             self._token = None
             raise
 
+    def _api_post(self, path: str, body: dict[str, Any]) -> None:
+        url = self._graph_url(path)
+        payload = json.dumps(body).encode("utf-8")
+        req = Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._get_token()}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(req, timeout=30) as resp:
+                resp.read()
+        except Exception:
+            self._token = None
+            raise
+
     def mark_message_read(self, message_id: str) -> None:
         user = quote(self.mailbox)
         mid = quote(message_id, safe="")
         self._api_patch(f"/users/{user}/messages/{mid}", {"isRead": True})
+
+    def send_mail(
+        self,
+        subject: str,
+        body: str,
+        recipients: list[str],
+        cc: list[str] | None = None,
+        *,
+        html_body: str | None = None,
+    ) -> None:
+        if not recipients:
+            raise ValueError("Graph mail requires at least one recipient")
+
+        def graph_recipients(addresses: list[str]) -> list[dict[str, dict[str, str]]]:
+            return [
+                {"emailAddress": {"address": address}}
+                for address in addresses
+                if address.strip()
+            ]
+
+        user = quote(self.mailbox)
+        message = {
+            "subject": subject,
+            "body": {
+                "contentType": "HTML" if html_body else "Text",
+                "content": html_body or body,
+            },
+            "toRecipients": graph_recipients(recipients),
+            "ccRecipients": graph_recipients(cc or []),
+        }
+        self._api_post(
+            f"/users/{user}/sendMail",
+            {"message": message, "saveToSentItems": True},
+        )
 
     @staticmethod
     def _parse_datetime(value: str) -> datetime:
