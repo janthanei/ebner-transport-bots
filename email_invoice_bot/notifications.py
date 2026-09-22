@@ -198,47 +198,58 @@ class PrintNotificationService:
         start_utc = period_start_local.astimezone(timezone.utc).isoformat()
         end_utc = period_end_local.astimezone(timezone.utc).isoformat()
         summary = ledger.period_summary(start_utc, end_utc)
-        unresolved = ledger.unresolved_errors()
-        unresolved_lines: list[str] = []
-        unresolved_html: list[str] = []
-        for job in unresolved:
+        failures = ledger.period_failures(start_utc, end_utc)
+        failure_lines: list[str] = []
+        failure_html: list[str] = []
+        for job in failures:
             email_subject = str(job.get("email_subject") or "Ohne Betreff")
             email_url = _outlook_url(job.get("email_web_url"))
-            unresolved_lines.append(f"- {job['file_name']} - {email_subject}")
+            failure_lines.append(f"- {job['file_name']} - {email_subject}")
             if email_url:
-                unresolved_lines.append(f"  Originale E-Mail öffnen: {email_url}")
+                failure_lines.append(f"  Originale E-Mail öffnen: {email_url}")
             link_html = (
                 f' · <a href="{escape(email_url, quote=True)}">Originale E-Mail öffnen</a>'
                 if email_url
                 else ""
             )
-            unresolved_html.append(
+            failure_html.append(
                 f'<li><strong>{escape(str(job["file_name"]))}</strong><br>'
                 f'{escape(email_subject)}{link_html}</li>'
             )
-        if not unresolved_lines:
-            unresolved_lines = ["- Keine offenen Druckfehler"]
-            unresolved_html = ["<li>Keine offenen Druckfehler</li>"]
         report_end_date = period_end_local.date() - timedelta(days=1)
-        body = "\n".join(
-            [
-                "Hallo Jan,",
-                "",
-                f"hier ist die Druckübersicht vom {period_start_local:%d.%m.%Y} bis {report_end_date:%d.%m.%Y}:",
-                f"- Verarbeitete Dokumente: {summary['total']}",
-                f"- Erfolgreich gedruckt: {summary['successful']}",
-                f"- Davon beim zweiten Versuch: {summary['recovered']}",
-                f"- Nicht gedruckt: {summary['failed']}",
-                f"- Noch in Bearbeitung: {summary['pending']}",
-                "",
-                "Offene Druckfehler:",
-                *unresolved_lines,
-                "",
-                f"Die betroffenen Dateien liegen zusätzlich hier: {self.error_share_path}",
-                "",
-                "Viele Grüße",
-                "Ebner Druckservice",
-            ]
+        body_lines = [
+            "Hallo Jan,",
+            "",
+            f"hier ist die Druckübersicht vom {period_start_local:%d.%m.%Y} bis {report_end_date:%d.%m.%Y}:",
+            f"- Verarbeitete Dokumente: {summary['total']}",
+            f"- Erfolgreich gedruckt: {summary['successful']}",
+        ]
+        if summary["pending"]:
+            body_lines.append(f"- Noch in Bearbeitung: {summary['pending']}")
+        body_lines.extend(["", "Automatisch fehlgeschlagene Drucke dieser Woche:"])
+        if failure_lines:
+            body_lines.extend(failure_lines)
+            body_lines.extend(
+                [
+                    "",
+                    f"Die betroffenen Dateien liegen zusätzlich hier: {self.error_share_path}",
+                ]
+            )
+        else:
+            body_lines.append("- Keine")
+        body_lines.extend(["", "Viele Grüße", "Ebner Druckservice"])
+        body = "\n".join(body_lines)
+        pending_row = (
+            f'<tr><td style="padding:7px">Noch in Bearbeitung</td><td style="padding:7px;text-align:right">{summary["pending"]}</td></tr>'
+            if summary["pending"]
+            else ""
+        )
+        failures_html = (
+            f'<ul>{"".join(failure_html)}</ul>'
+            '<p>Die betroffenen Dateien liegen zusätzlich hier:<br>'
+            f'<code>{escape(self.error_share_path)}</code></p>'
+            if failure_html
+            else "<p>Keine</p>"
         )
         html_body = (
             '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2933;max-width:640px">'
@@ -248,14 +259,10 @@ class PrintNotificationService:
             '<table style="border-collapse:collapse;width:100%;max-width:480px">'
             f'<tr><td style="padding:7px;border-bottom:1px solid #ddd">Verarbeitete Dokumente</td><td style="padding:7px;text-align:right;border-bottom:1px solid #ddd"><strong>{summary["total"]}</strong></td></tr>'
             f'<tr><td style="padding:7px;border-bottom:1px solid #ddd">Erfolgreich gedruckt</td><td style="padding:7px;text-align:right;border-bottom:1px solid #ddd"><strong>{summary["successful"]}</strong></td></tr>'
-            f'<tr><td style="padding:7px;border-bottom:1px solid #ddd">Davon beim zweiten Versuch</td><td style="padding:7px;text-align:right;border-bottom:1px solid #ddd">{summary["recovered"]}</td></tr>'
-            f'<tr><td style="padding:7px;border-bottom:1px solid #ddd">Nicht gedruckt</td><td style="padding:7px;text-align:right;border-bottom:1px solid #ddd"><strong>{summary["failed"]}</strong></td></tr>'
-            f'<tr><td style="padding:7px">Noch in Bearbeitung</td><td style="padding:7px;text-align:right">{summary["pending"]}</td></tr>'
+            f'{pending_row}'
             '</table>'
-            '<h3 style="margin-top:24px">Offene Druckfehler</h3>'
-            f'<ul>{"".join(unresolved_html)}</ul>'
-            '<p>Die betroffenen Dateien liegen zusätzlich hier:<br>'
-            f'<code>{escape(self.error_share_path)}</code></p>'
+            '<h3 style="margin-top:24px">Automatisch fehlgeschlagene Drucke dieser Woche</h3>'
+            f'{failures_html}'
             '<p>Viele Grüße<br>Ebner Druckservice</p></div>'
         )
         self._send(

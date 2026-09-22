@@ -239,6 +239,20 @@ class PrintLedger:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def period_failures(self, start_utc: str, end_utc: str) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM print_jobs
+                WHERE retry_of_job_id IS NULL
+                  AND status IN ('error', 'retry_failed')
+                  AND updated_utc >= ? AND updated_utc < ?
+                ORDER BY updated_utc ASC
+                """,
+                (start_utc, end_utc),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def unnotified_errors(self) -> list[dict]:
         with self._connect() as connection:
             rows = connection.execute(

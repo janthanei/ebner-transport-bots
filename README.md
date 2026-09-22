@@ -113,7 +113,7 @@ Important variables:
 - `PRINT_WEEKLY_REPORT_HOUR`: local report hour; defaults to `8`
 - `PRINT_REPORT_TIMEZONE`: defaults to `Europe/Berlin`
 
-Final print errors generate one immediate email. SMTP delivery failures remain unnotified in the ledger and are retried on a later cycle. Weekly reports are recorded by period so service restarts cannot send the same report twice.
+Final print errors generate one immediate email. SMTP delivery failures remain unnotified in the ledger and are retried on a later cycle. Weekly reports list final failures from that reporting week once, rather than treating them as permanently open, and are recorded by period so service restarts cannot send the same report twice.
 For Microsoft Graph messages, notifications include a direct Outlook link to the original email. Existing historical jobs without a stored link continue to use the error-folder path as a fallback.
 
 ### Logging

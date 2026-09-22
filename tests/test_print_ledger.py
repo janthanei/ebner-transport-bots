@@ -78,6 +78,35 @@ def test_print_ledger_tracks_unresolved_submission_failure(tmp_path: Path):
     assert errors[0]["error_message"] == "SMTP is unrelated"
 
 
+def test_period_failures_only_returns_final_failures_updated_in_period(tmp_path: Path):
+    ledger = PrintLedger(tmp_path / "print_history.sqlite3")
+    failed = tmp_path / "broken.pdf"
+    ledger.record_submission(
+        job_id=123,
+        file_path=failed,
+        printer_id=456,
+        submitted_utc="2026-09-01T10:00:00+00:00",
+    )
+    with ledger._connect() as connection:
+        connection.execute(
+            "UPDATE print_jobs SET status = 'error', updated_utc = ? WHERE printnode_job_id = ?",
+            ("2026-09-20T10:00:00+00:00", 123),
+        )
+    ledger.record_submission(
+        job_id=124,
+        file_path=tmp_path / "pending.pdf",
+        printer_id=456,
+        submitted_utc="2026-09-20T11:00:00+00:00",
+    )
+
+    failures = ledger.period_failures(
+        "2026-09-14T00:00:00+00:00",
+        "2026-09-21T00:00:00+00:00",
+    )
+
+    assert [job["printnode_job_id"] for job in failures] == [123]
+
+
 def test_import_printnode_history_is_idempotent_and_suppresses_old_errors(tmp_path: Path):
     ledger = PrintLedger(tmp_path / "print_history.sqlite3")
     jobs = [

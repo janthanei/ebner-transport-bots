@@ -106,3 +106,49 @@ def test_weekly_report_is_idempotent(tmp_path: Path):
     plain = message.get_body(preferencelist=("plain",)).get_content()
     assert "Verarbeitete Dokumente: 1" in plain
     assert "14.09.2026 bis 20.09.2026" in plain
+    assert "Davon beim zweiten Versuch" not in plain
+    assert "Noch in Bearbeitung" not in plain
+
+
+def test_weekly_report_lists_only_failures_from_report_period(tmp_path: Path):
+    StubSmtp.messages = []
+    ledger = PrintLedger(tmp_path / "history.sqlite3")
+    ledger.record_submission(
+        job_id=123,
+        file_path=tmp_path / "current.pdf",
+        printer_id=456,
+        email_subject="Current invoice",
+        email_web_url="https://outlook.office.com/mail/deeplink/read/current",
+        submitted_utc="2026-09-20T10:00:00+00:00",
+    )
+    ledger.update_status(123, "error", error_message="renderer failed")
+    ledger.record_submission(
+        job_id=124,
+        file_path=tmp_path / "old.pdf",
+        printer_id=456,
+        email_subject="Old invoice",
+        email_web_url="https://outlook.office.com/mail/deeplink/read/old",
+        submitted_utc="2026-09-01T10:00:00+00:00",
+    )
+    with ledger._connect() as connection:
+        connection.execute(
+            "UPDATE print_jobs SET updated_utc = ? WHERE printnode_job_id = ?",
+            ("2026-09-20T10:01:00+00:00", 123),
+        )
+        connection.execute(
+            "UPDATE print_jobs SET status = 'error', updated_utc = ? WHERE printnode_job_id = ?",
+            ("2026-09-01T10:01:00+00:00", 124),
+        )
+
+    service = _service()
+    assert service.maybe_send_weekly_report(
+        ledger,
+        now_utc=datetime(2026, 9, 21, 6, 30, tzinfo=timezone.utc),
+    )
+
+    message = StubSmtp.messages[0]
+    plain = message.get_body(preferencelist=("plain",)).get_content()
+    html = message.get_body(preferencelist=("html",)).get_content()
+    assert "current.pdf" in plain
+    assert "old.pdf" not in plain
+    assert "Originale E-Mail öffnen" in html
